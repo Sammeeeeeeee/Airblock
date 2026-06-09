@@ -1,5 +1,6 @@
 package com.sam.airblock.engine
 
+import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -69,7 +70,19 @@ class Gates(private val context: Context) {
         lastQueryTime = now
         val fg = lastForegroundPkg
             ?: return true // no usage access / no data — fail open to screen-on gating
-        return fg in launcherPackages || fg == context.packageName
+        // Our own package only counts when the UI is actually on screen — the
+        // foreground SERVICE keeps the process alive, so without this check a
+        // stale "Airblock was last resumed" reading keeps the gate wedged open
+        // and the widget ticks while other apps are in front.
+        return fg in launcherPackages ||
+            (fg == context.packageName && selfUiVisible())
+    }
+
+    /** True when OUR activity is actually visible (not just the FGS running). */
+    private fun selfUiVisible(): Boolean {
+        val info = ActivityManager.RunningAppProcessInfo()
+        ActivityManager.getMyMemoryState(info)
+        return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     /** Whether the user has granted Usage Access (Settings > Special app access). */

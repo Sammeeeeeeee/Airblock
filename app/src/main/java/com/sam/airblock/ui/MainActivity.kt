@@ -1,6 +1,8 @@
 package com.sam.airblock.ui
 
 import android.Manifest
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -30,10 +32,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -59,7 +63,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.coroutineScope
+import com.sam.airblock.widget.AirblockWidgetReceiver
 import androidx.compose.material3.Switch
 import androidx.compose.ui.text.font.FontFamily
 import com.sam.airblock.R
@@ -193,26 +200,59 @@ private fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
+            var showLog by remember { mutableStateOf(false) }
             Spacer(Modifier.height(40.dp))
-            Text(
-                "Airblock ✈",
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                "Nearest-plane widget",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Airblock ✈",
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "Nearest-plane widget",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { showLog = true }) {
+                    Icon(
+                        painterResource(R.drawable.ic_console), "Activity log",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Spacer(Modifier.height(24.dp))
+
+            if (showLog) {
+                LogDialog(
+                    logEnabled = logEnabled,
+                    onToggle = { on ->
+                        logEnabled = on
+                        save()
+                        if (!on) EventLog.clear(context)
+                    },
+                    onDismiss = { showLog = false },
+                )
+            }
 
             // ---- All-set banner ------------------------------------------
             if (perms.allGranted) {
                 Surface(
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val awm = context.getSystemService(AppWidgetManager::class.java)
+                            if (awm.isRequestPinAppWidgetSupported) {
+                                awm.requestPinAppWidget(
+                                    ComponentName(context, AirblockWidgetReceiver::class.java),
+                                    null, null,
+                                )
+                            }
+                        },
                 ) {
                     Row(
                         Modifier.padding(20.dp),
@@ -224,7 +264,7 @@ private fun SettingsScreen(
                         )
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            "All set — add the 4×2 Airblock widget to your home screen",
+                            "All set — tap to add the Airblock widget",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
@@ -321,64 +361,6 @@ private fun SettingsScreen(
             }
             Spacer(Modifier.height(24.dp))
 
-            // ---- Activity log ---------------------------------------------
-            SectionLabel("Activity")
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(20.dp), Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Activity log",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                "What the engine did and when. Turning it off deletes the records.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = logEnabled,
-                            onCheckedChange = { on ->
-                                logEnabled = on
-                                save()
-                                if (!on) EventLog.clear(context)
-                            },
-                        )
-                    }
-                    if (logEnabled) {
-                        var events by remember { mutableStateOf(listOf<String>()) }
-                        LaunchedEffect(logEnabled) {
-                            while (true) {
-                                events = EventLog.read(context, limit = 60)
-                                delay(2000)
-                            }
-                        }
-                        Column {
-                            events.forEach { e ->
-                                Text(
-                                    e,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontFamily = FontFamily.Monospace),
-                                    color = if ("FAILED" in e)
-                                        MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            if (events.isEmpty()) {
-                                Text("No activity yet.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-
             // ---- Attribution ----------------------------------------------
             SectionLabel("Data & photos")
             Surface(
@@ -468,6 +450,85 @@ private fun StatusCard(state: WidgetState) {
                     color = ui.content)
                 Text(ui.detail, style = MaterialTheme.typography.bodySmall,
                     color = ui.content)
+            }
+        }
+    }
+}
+
+/** Full-screen activity-log console, opened from the header icon. */
+@Composable
+private fun LogDialog(
+    logEnabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Spacer(Modifier.height(24.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, "close",
+                            tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Text(
+                        "Activity log",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = logEnabled, onCheckedChange = onToggle)
+                }
+                Text(
+                    "What the engine did and when. Turning the log off deletes all records.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
+                )
+                if (logEnabled) {
+                    var events by remember { mutableStateOf(listOf<String>()) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            events = EventLog.read(context, limit = 200)
+                            delay(2000)
+                        }
+                    }
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        events.forEach { e ->
+                            Text(
+                                e,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace),
+                                color = if ("FAILED" in e) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (events.isEmpty()) {
+                            Text("No activity yet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Spacer(Modifier.height(24.dp))
+                    }
+                } else {
+                    Text(
+                        "Log is off.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
             }
         }
     }

@@ -382,31 +382,16 @@ private fun ChipsRow(state: WidgetState) {
             modifier = GlanceModifier.defaultWeight(),
         )
         Spacer(GlanceModifier.width(5.dp))
-        // Speed as a split chip: ground speed | Mach (when known)
-        Row(modifier = GlanceModifier.defaultWeight()) {
-            Chip(
-                icon = R.drawable.ic_speed,
-                label = state.speedMph?.let { Units.formatSpeed(it) } ?: "—",
-                bg = GlanceTheme.colors.tertiaryContainer,
-                fg = GlanceTheme.colors.onTertiaryContainer,
-                modifier = GlanceModifier.defaultWeight(),
-            )
-            state.mach?.let { m ->
-                Spacer(GlanceModifier.width(2.dp))
-                Box(
-                    modifier = GlanceModifier.background(GlanceTheme.colors.tertiaryContainer)
-                        .cornerRadius(12.dp).padding(horizontal = 5.dp, vertical = 4.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "M" + "%.2f".format(m).trimStart('0'), // 0.79 -> "M.79"
-                        style = TextStyle(fontSize = 10.sp,
-                            color = GlanceTheme.colors.onTertiaryContainer),
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
+        // Speed and Mach combined in one pill (Glance can't do per-corner
+        // radii, so a true split button isn't possible)
+        Chip(
+            icon = R.drawable.ic_speed,
+            label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
+                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
+            bg = GlanceTheme.colors.tertiaryContainer,
+            fg = GlanceTheme.colors.onTertiaryContainer,
+            modifier = GlanceModifier.defaultWeight(),
+        )
         Spacer(GlanceModifier.width(5.dp))
         Chip(
             icon = R.drawable.ic_distance,

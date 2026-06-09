@@ -135,6 +135,7 @@ class UpdateService : Service() {
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
                 else -> {
+                    Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"})")
                     logPhase("active", "updates running")
                     tickAndWait()
                 }
