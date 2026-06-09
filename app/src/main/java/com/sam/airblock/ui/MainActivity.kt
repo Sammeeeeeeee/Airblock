@@ -347,8 +347,14 @@ private fun SettingsScreen(
                         valueRange = 5f..250f,
                     )
                     Text(
-                        "Refresh every",
+                        "Normal refresh rate",
                         style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Used by default — the per-network rules below can " +
+                            "slow it to 10 min or turn refreshing off.",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -413,6 +419,11 @@ private fun StatusCard(state: WidgetState) {
         ageSec < 120 -> "$ageSec s ago"
         else -> "${ageSec / 60} min ago"
     }
+    // Schedule-aware staleness — 9-min-old data is HEALTHY on the 10-min plan
+    val staleDeadline = if (state.staleAfterMs > 0) state.staleAfterMs
+    else state.updatedAt + 120_000
+    val isStaleNow = state.updatedAt > 0 && now > staleDeadline
+    val schedule = state.modeLabel?.let { " · $it" } ?: ""
 
     data class StatusUi(val icon: Int, val title: String, val detail: String,
         val container: Color, val content: Color)
@@ -440,14 +451,14 @@ private fun StatusCard(state: WidgetState) {
             R.drawable.ic_flight, "Waiting for first refresh",
             "Add the widget to your home screen, or tap it to refresh now.",
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
-        ageSec >= 120 -> StatusUi(
+        isStaleNow -> StatusUi(
             R.drawable.ic_clock, "Data is stale",
-            "Last update ${age()}. The widget only refreshes while your " +
-                "home screen is visible.",
+            "Last update ${age()} (schedule: ${state.modeLabel ?: "normal"}). " +
+                "The widget only refreshes while your home screen is visible.",
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
         else -> StatusUi(
             R.drawable.ic_flight, "Up to date",
-            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
+            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · ") + schedule,
             cs.secondaryContainer, cs.onSecondaryContainer)
     }
 

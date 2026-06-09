@@ -184,31 +184,25 @@ class UpdateService : Service() {
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
                 else -> {
-                    // Per-network refresh mode + system Data Saver
+                    // Per-network refresh mode + system Data Saver — one
+                    // shared decision (Gates.effectiveMode) with the verdict
+                    // always visible in logcat + activity log.
                     val s = SettingsStore.read(this)
-                    val mode = when {
-                        gates.dataSaverOn() -> NetMode.OFF
-                        gates.networkTransport() == "wifi" -> s.wifiMode
-                        gates.networkTransport() == "cell" -> s.dataMode
-                        else -> NetMode.NORMAL
-                    }
+                    val (mode, why) = gates.effectiveMode(s)
+                    Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"}) " +
+                        "net=$why mode=$mode")
                     when (mode) {
                         NetMode.OFF -> {
-                            val why = if (gates.dataSaverOn()) "data saver"
-                            else "off on ${gates.networkTransport() ?: "this network"}"
-                            Log.d(TAG, "network-gated: $why")
-                            logPhase("netoff", "paused — $why")
-                            setPausedFlag(why)
+                            logPhase("netoff-$why", "paused — off ($why)")
+                            setPausedFlag("off ($why)")
                             awaitWake(NET_RECHECK_MS)
                         }
                         NetMode.SLOW -> {
-                            Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"}) — slow mode")
-                            logPhase("active", "updates running (10 min mode)")
+                            logPhase("active-slow-$why", "updates running ($why · 10 min)")
                             tickAndWait(SLOW_INTERVAL_MS)
                         }
                         NetMode.NORMAL -> {
-                            Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"})")
-                            logPhase("active", "updates running")
+                            logPhase("active-$why", "updates running ($why · ${s.intervalSec}s)")
                             tickAndWait(s.intervalSec * 1000L)
                         }
                     }

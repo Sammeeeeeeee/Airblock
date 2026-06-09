@@ -41,13 +41,7 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
                 // respect ALL the same gates the service does, incl. the
                 // user's per-network modes and system Data Saver.
                 val gates = Gates(ctx)
-                val s = SettingsStore.read(ctx)
-                val mode = when {
-                    gates.dataSaverOn() -> NetMode.OFF
-                    gates.networkTransport() == "wifi" -> s.wifiMode
-                    gates.networkTransport() == "cell" -> s.dataMode
-                    else -> NetMode.NORMAL
-                }
+                val (mode, _) = gates.effectiveMode(SettingsStore.read(ctx))
                 if (gates.screenOn() && gates.unlocked() && !gates.powerSave() &&
                     gates.launcherForeground() && mode != NetMode.OFF
                 ) {

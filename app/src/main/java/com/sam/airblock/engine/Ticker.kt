@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
 import com.sam.airblock.data.EventLog
+import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PhotoRepo
 import com.sam.airblock.data.RouteResult
 import com.sam.airblock.data.SettingsStore
@@ -26,6 +27,7 @@ class Ticker(private val context: Context) {
 
     private val location = LocationProvider(context)
     private val photos = PhotoRepo(context)
+    private val gates = Gates(context)
     private val api = AdsbApi()
 
     // Per-flight caches: one route lookup per callsign, one photo per hex
@@ -37,12 +39,28 @@ class Ticker(private val context: Context) {
     suspend fun tick() {
         val settings = SettingsStore.read(context)
         val log = settings.logEnabled
+
+        // Schedule-aware freshness: data on the 10-min plan isn't "stale"
+        // after 2 minutes — stamp every state with its real deadline + label.
+        val (netMode, netWhy) = gates.effectiveMode(settings)
+        val effIntervalMs = when (netMode) {
+            NetMode.SLOW -> 10L * 60 * 1000
+            else -> settings.intervalSec * 1000L
+        }
+        val staleAfter = System.currentTimeMillis() + maxOf(effIntervalMs * 2, 120_000L)
+        val modeLabel = when (netMode) {
+            NetMode.SLOW -> "$netWhy · 10 min"
+            NetMode.OFF -> "$netWhy · off"
+            else -> "$netWhy · ${settings.intervalSec}s"
+        }
+
         val fix = location.currentFix()
         if (fix == null) {
             Log.d(TAG, "tick: no location fix")
             if (log) EventLog.append(context, "update skipped — no location fix")
             publish(WidgetState(status = WidgetState.Status.NO_LOCATION,
-                updatedAt = System.currentTimeMillis()))
+                updatedAt = System.currentTimeMillis(),
+                staleAfterMs = staleAfter, modeLabel = modeLabel))
             return
         }
         try {
@@ -52,7 +70,8 @@ class Ticker(private val context: Context) {
                 Log.d(TAG, "tick: no aircraft within ${settings.radiusNm} nm")
                 if (log) EventLog.append(context, "updated — no aircraft within ${settings.radiusNm} nm")
                 publish(WidgetState(status = WidgetState.Status.NO_AIRCRAFT,
-                    updatedAt = System.currentTimeMillis()))
+                    updatedAt = System.currentTimeMillis(),
+                    staleAfterMs = staleAfter, modeLabel = modeLabel))
                 return
             }
 
@@ -135,6 +154,8 @@ class Ticker(private val context: Context) {
                 photoPath = photo?.file?.absolutePath,
                 photoCredit = photo?.photographer,
                 updatedAt = System.currentTimeMillis(),
+                staleAfterMs = staleAfter,
+                modeLabel = modeLabel,
             ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e

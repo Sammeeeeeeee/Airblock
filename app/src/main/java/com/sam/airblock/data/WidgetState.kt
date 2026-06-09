@@ -46,6 +46,10 @@ data class WidgetState(
     val pausedReason: String? = null,  // e.g. "battery saver"
     val errorCount: Int = 0,           // consecutive failed refreshes
     val lastError: String? = null,     // human-readable cause of the last failure
+    /** Epoch ms after which this data counts as stale (schedule-aware). */
+    val staleAfterMs: Long = 0L,
+    /** Human label of the active refresh schedule, e.g. "wifi · 10 min". */
+    val modeLabel: String? = null,
 ) {
     enum class Status { OK, NO_AIRCRAFT, NO_LOCATION, NO_DATA, ERROR }
 
@@ -56,7 +60,7 @@ data class WidgetState(
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
         originIata, destIata, photoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
-        specialType, registration,
+        specialType, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")
 }

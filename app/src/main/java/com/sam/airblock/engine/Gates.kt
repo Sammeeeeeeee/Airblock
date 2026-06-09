@@ -88,16 +88,32 @@ class Gates(private val context: Context) {
         return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
-    /** "wifi", "cell", "other", or null when offline. */
+    /**
+     * "wifi", "cell", "other", or null when offline. VPNs (AdGuard, Tailscale,
+     * NextDNS…) report TRANSPORT_VPN and would otherwise mask the real
+     * transport — resolve the underlying network in that case.
+     */
     fun networkTransport(): String? {
-        val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-            ?: return null
-        return when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cell"
-            else -> "other"
+        val active = connectivity.activeNetwork ?: return null
+        val caps = connectivity.getNetworkCapabilities(active) ?: return null
+        transportOf(caps)?.let { return it }
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+            @Suppress("DEPRECATION")
+            connectivity.allNetworks.forEach { n ->
+                val c = connectivity.getNetworkCapabilities(n) ?: return@forEach
+                if (!c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    transportOf(c)?.let { return it }
+                }
+            }
         }
+        return "other"
+    }
+
+    private fun transportOf(caps: NetworkCapabilities): String? = when {
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cell"
+        else -> null
     }
 
     /** System Data Saver active on a metered connection — do no network at all. */
@@ -105,6 +121,25 @@ class Gates(private val context: Context) {
         connectivity.isActiveNetworkMetered &&
             connectivity.restrictBackgroundStatus ==
             ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+
+    /**
+     * The single source of truth for "how should we refresh right now",
+     * combining transport, the user's per-network modes and Data Saver.
+     * Used identically by the service loop and the keep-alive worker.
+     */
+    fun effectiveMode(settings: com.sam.airblock.data.Settings): Pair<com.sam.airblock.data.NetMode, String> {
+        val transport = networkTransport()
+        return when {
+            transport == null ->
+                com.sam.airblock.data.NetMode.OFF to "offline"
+            dataSaverOn() ->
+                com.sam.airblock.data.NetMode.OFF to "data saver"
+            transport == "wifi" -> settings.wifiMode to "wifi"
+            transport == "cell" -> settings.dataMode to "mobile data"
+            // Unknown transport: honour the MORE restrictive of the two rules
+            else -> maxOf(settings.wifiMode, settings.dataMode) to "unknown network"
+        }
+    }
 
     /** Whether the user has granted Usage Access (Settings > Special app access). */
     fun hasUsageAccess(): Boolean {

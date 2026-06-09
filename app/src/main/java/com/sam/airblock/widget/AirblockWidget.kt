@@ -410,7 +410,7 @@ private fun ChipsRow(state: WidgetState) {
         Chip(
             icon = R.drawable.ic_speed,
             label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
-                (state.mach?.let { "·M" + "%.2f".format(it).trimStart('0') } ?: ""),
+                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
             bg = GlanceTheme.colors.tertiaryContainer,
             fg = GlanceTheme.colors.onTertiaryContainer,
         )
@@ -485,5 +485,10 @@ private fun EmptyMessage(message: String) {
     }
 }
 
-private fun isStale(state: WidgetState): Boolean =
-    state.updatedAt > 0 && System.currentTimeMillis() - state.updatedAt > 2 * 60_000
+/** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */
+private fun isStale(state: WidgetState): Boolean {
+    if (state.updatedAt <= 0) return false
+    val deadline = if (state.staleAfterMs > 0) state.staleAfterMs
+    else state.updatedAt + 2 * 60_000
+    return System.currentTimeMillis() > deadline
+}
