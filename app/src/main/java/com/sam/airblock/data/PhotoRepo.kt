@@ -44,7 +44,7 @@ class PhotoRepo(context: Context) {
                 .photos.firstOrNull()
         }
         val src = photo?.thumbnailLarge?.src ?: photo?.thumbnail?.src
-        if (src == null) {
+        if (photo == null || src == null) {
             miss.writeText("") // remember "no photo" so we don't re-ask every tick
             return null
         }

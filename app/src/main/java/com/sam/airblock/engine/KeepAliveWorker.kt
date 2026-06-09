@@ -13,9 +13,11 @@ import com.sam.airblock.widget.AirblockWidgetReceiver
 import java.util.concurrent.TimeUnit
 
 /**
- * Safety net: every 15 min (WorkManager minimum) make sure the update service
- * is alive while a widget is placed. Costs nothing when the service is already
- * running; resurrects it if the OS killed our process.
+ * Safety net: every 15 min (WorkManager minimum) while a widget is placed.
+ * Android 12+ usually DENIES starting an FGS from a worker (background), so
+ * when the service is dead this does the next best thing: one inline refresh
+ * tick right here (workers may do network), keeping the widget at worst
+ * 15 min stale until a widget tap revives the 15 s service.
  */
 class KeepAliveWorker(context: Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
@@ -29,7 +31,17 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
             unschedule(ctx)
             return Result.success()
         }
-        if (!serviceRunning(ctx)) UpdateService.start(ctx)
+        if (!serviceRunning(ctx)) {
+            val revived = UpdateService.start(ctx)
+            if (!revived) {
+                // Service stays dead until the user taps the widget; at least
+                // refresh the data once so what's shown isn't ancient.
+                val gates = Gates(ctx)
+                if (gates.screenOn() && !gates.powerSave() && gates.launcherForeground()) {
+                    Ticker(ctx).tick()
+                }
+            }
+        }
         return Result.success()
     }
 

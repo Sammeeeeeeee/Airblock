@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Opening the app is a foreground context — always allowed to (re)start the engine
+        UpdateService.start(this, tickNow = true)
         setContent {
             val dark = isSystemInDarkTheme()
             val ctx = LocalContext.current

@@ -62,30 +62,30 @@ class ParsingTest {
         assertTrue(Http.json.decodeFromString<ClosestResponse>(json).ac.isEmpty())
     }
 
-    @Test fun parsesRouteset() {
+    @Test fun parsesRoute() {
+        // Captured live from api.adsb.lol/api/0/route/DAL420 (2026-06-09)
         val json = """
-        [{
-          "callsign": "DAL1234",
-          "number": "DL1234",
+        {
+          "callsign": "DAL420",
+          "number": "420",
           "airline_code": "DAL",
-          "airport_codes": "JFK-LAX",
-          "_airport_codes_iata": "JFK-LAX",
-          "plausible": true,
+          "airport_codes": "KLAX-KDFW",
+          "_airport_codes_iata": "LAX-DFW",
           "_airports": [
-            {"alt":13,"countryiso2":"US","iata":"JFK","icao":"KJFK",
-             "lat":40.639,"location":"New York","lon":-73.778,
-             "name":"John F Kennedy International Airport"},
-            {"alt":125,"countryiso2":"US","iata":"LAX","icao":"KLAX",
-             "lat":33.942,"location":"Los Angeles","lon":-118.408,
-             "name":"Los Angeles International Airport"}
+            {"name":"Los Angeles International Airport","icao":"KLAX","iata":"LAX",
+             "location":"Los Angeles","countryiso2":"US",
+             "lat":33.942501,"lon":-118.407997,"alt_feet":125.0,"alt_meters":38.1},
+            {"name":"Dallas Fort Worth International Airport","icao":"KDFW","iata":"DFW",
+             "location":"Dallas-Fort Worth","countryiso2":"US",
+             "lat":32.896801,"lon":-97.038002,"alt_feet":607.0,"alt_meters":185.01}
           ]
-        }]
+        }
         """.trimIndent()
-        val route = Http.json.decodeFromString<List<RouteResult>>(json).single()
-        assertEquals("JFK", route.airports.first().iata)
-        assertEquals("LAX", route.airports.last().iata)
+        val route = Http.json.decodeFromString<RouteResult>(json)
+        assertEquals("LAX", route.airports.first().iata)
+        assertEquals("DFW", route.airports.last().iata)
         assertEquals("US", route.airports.first().countryIso2)
-        assertEquals("New York", route.airports.first().location)
+        assertEquals("Los Angeles", route.airports.first().location)
     }
 
     @Test fun parsesPlanespotters() {

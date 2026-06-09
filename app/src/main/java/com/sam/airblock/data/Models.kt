@@ -40,19 +40,13 @@ data class Aircraft(
     val onGround: Boolean get() = altBaro?.content == "ground"
 }
 
-// ---------- adsb.lol /api/0/routeset ----------
-
-@Serializable
-data class RoutesetRequest(val planes: List<RoutePlane>)
-
-@Serializable
-data class RoutePlane(val callsign: String, val lat: Double, val lng: Double)
+// ---------- adsb.lol /api/0/route/{callsign} ----------
+// (GET, 302-redirects to a static JSON file on vrs-standing-data.adsb.lol)
 
 @Serializable
 data class RouteResult(
     val callsign: String? = null,
     @SerialName("airport_codes") val airportCodes: String? = null,
-    val plausible: Boolean? = null,
     @SerialName("_airports") val airports: List<RouteAirport> = emptyList(),
 )
 
