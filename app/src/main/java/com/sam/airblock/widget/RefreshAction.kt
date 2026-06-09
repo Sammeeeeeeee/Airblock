@@ -19,9 +19,12 @@ class RefreshAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters,
     ) {
-        val cur = WidgetStateStore.read(context)
-        WidgetStateStore.write(context, cur.copy(refreshing = true))
+        WidgetStateStore.update(context) { it.copy(refreshing = true) }
         AirblockWidget().updateAll(context)
-        UpdateService.start(context, tickNow = true)
+        if (!UpdateService.start(context, tickNow = true)) {
+            // FGS start denied — clear the spinner instead of leaving it stuck
+            WidgetStateStore.update(context) { it.copy(refreshing = false) }
+            AirblockWidget().updateAll(context)
+        }
     }
 }

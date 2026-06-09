@@ -65,6 +65,12 @@ class PhotoRepo(context: Context) {
 
     /** Keep the cache bounded: newest [MAX_PHOTOS] aircraft only. */
     private fun prune() {
+        // Expired negative-cache markers would otherwise accumulate forever
+        val now = System.currentTimeMillis()
+        dir.listFiles { f -> f.extension == "none" }
+            ?.filter { now - it.lastModified() > NEG_TTL_MS }
+            ?.forEach { it.delete() }
+
         val images = dir.listFiles { f -> f.extension == "jpg" } ?: return
         if (images.size <= MAX_PHOTOS) return
         images.sortedBy { it.lastModified() }

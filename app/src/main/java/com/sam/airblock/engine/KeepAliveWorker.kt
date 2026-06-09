@@ -9,6 +9,8 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.sam.airblock.data.NetMode
+import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.widget.AirblockWidgetReceiver
 import java.util.concurrent.TimeUnit
 
@@ -35,9 +37,20 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
             val revived = UpdateService.start(ctx)
             if (!revived) {
                 // Service stays dead until the user taps the widget; at least
-                // refresh the data once so what's shown isn't ancient.
+                // refresh the data once so what's shown isn't ancient. Must
+                // respect ALL the same gates the service does, incl. the
+                // user's per-network modes and system Data Saver.
                 val gates = Gates(ctx)
-                if (gates.screenOn() && !gates.powerSave() && gates.launcherForeground()) {
+                val s = SettingsStore.read(ctx)
+                val mode = when {
+                    gates.dataSaverOn() -> NetMode.OFF
+                    gates.networkTransport() == "wifi" -> s.wifiMode
+                    gates.networkTransport() == "cell" -> s.dataMode
+                    else -> NetMode.NORMAL
+                }
+                if (gates.screenOn() && gates.unlocked() && !gates.powerSave() &&
+                    gates.launcherForeground() && mode != NetMode.OFF
+                ) {
                     Ticker(ctx).tick()
                 }
             }

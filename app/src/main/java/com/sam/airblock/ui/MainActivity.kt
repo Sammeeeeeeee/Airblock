@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Opening the app is a foreground context — always allowed to (re)start the engine
         UpdateService.start(this, tickNow = true)
-        lifecycle.coroutineScope.launch {
+        lifecycle.coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (SettingsStore.read(this@MainActivity).logEnabled)
                 EventLog.append(this@MainActivity, "app opened")
         }
@@ -322,7 +322,7 @@ private fun SettingsScreen(
             SectionLabel("Tuning")
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
@@ -380,7 +380,7 @@ private fun SettingsScreen(
             SectionLabel("Data & photos")
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
@@ -425,7 +425,10 @@ private fun StatusCard(state: WidgetState) {
             cs.primaryContainer, cs.onPrimaryContainer)
         state.pausedReason != null -> StatusUi(
             R.drawable.ic_battery_saver, "Paused — ${state.pausedReason}",
-            "Refreshes resume automatically when battery saver turns off. " +
+            (if (state.pausedReason == "battery saver")
+                "Refreshes resume automatically when battery saver turns off. "
+            else
+                "Refreshes resume automatically when the network or its setting changes. ") +
                 "Last update: ${age()}.",
             cs.tertiaryContainer, cs.onTertiaryContainer)
         state.errorCount > 0 -> StatusUi(
@@ -436,12 +439,12 @@ private fun StatusCard(state: WidgetState) {
         ageSec < 0 -> StatusUi(
             R.drawable.ic_flight, "Waiting for first refresh",
             "Add the widget to your home screen, or tap it to refresh now.",
-            cs.surfaceVariant, cs.onSurfaceVariant)
+            cs.surfaceContainerHigh, cs.onSurfaceVariant)
         ageSec >= 120 -> StatusUi(
             R.drawable.ic_clock, "Data is stale",
             "Last update ${age()}. The widget only refreshes while your " +
                 "home screen is visible.",
-            cs.surfaceVariant, cs.onSurfaceVariant)
+            cs.surfaceContainerHigh, cs.onSurfaceVariant)
         else -> StatusUi(
             R.drawable.ic_flight, "Up to date",
             listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
@@ -449,7 +452,7 @@ private fun StatusCard(state: WidgetState) {
     }
 
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp), // M3 large-increased: row-level card
         color = ui.container,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -535,7 +538,10 @@ private fun LogDialog(
                     var events by remember { mutableStateOf(listOf<String>()) }
                     LaunchedEffect(Unit) {
                         while (true) {
-                            events = EventLog.read(context, limit = 200)
+                            events = kotlinx.coroutines.withContext(
+                                kotlinx.coroutines.Dispatchers.IO) {
+                                EventLog.read(context, limit = 200)
+                            }
                             delay(2000)
                         }
                     }
@@ -593,9 +599,9 @@ private fun PermissionRow(
     onClick: () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp), // M3 large-increased: row-level card
         color = if (granted) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surfaceVariant,
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = !granted, onClick = onClick),
@@ -637,7 +643,7 @@ private fun PermissionRow(
             if (granted) {
                 Icon(
                     Icons.Filled.Check, "granted",
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             } else {
                 Icon(

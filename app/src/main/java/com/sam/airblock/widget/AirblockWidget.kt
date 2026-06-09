@@ -84,15 +84,39 @@ class AirblockWidget : GlanceAppWidget() {
     }
 }
 
+/** Content colors paired with the widget background (varies for special aircraft). */
+private data class WidgetPalette(
+    val bg: ColorProvider,
+    val onBg: ColorProvider,
+    val onBgVariant: ColorProvider,
+)
+
+@Composable
+private fun widgetPalette(specialType: String?): WidgetPalette = when (specialType) {
+    null -> WidgetPalette(
+        GlanceTheme.colors.widgetBackground,
+        GlanceTheme.colors.onSurface,
+        GlanceTheme.colors.onSurfaceVariant,
+    )
+    "Military" -> WidgetPalette(
+        GlanceTheme.colors.errorContainer,
+        GlanceTheme.colors.onErrorContainer,
+        GlanceTheme.colors.onErrorContainer,
+    )
+    else -> WidgetPalette(
+        GlanceTheme.colors.tertiaryContainer,
+        GlanceTheme.colors.onTertiaryContainer,
+        GlanceTheme.colors.onTertiaryContainer,
+    )
+}
+
 @Composable
 private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
     // Non-standard aircraft (military, police helicopters…) get an
-    // attention-grabbing tonal background.
-    val bg = when (state.specialType) {
-        null -> GlanceTheme.colors.widgetBackground
-        "Military" -> GlanceTheme.colors.errorContainer
-        else -> GlanceTheme.colors.tertiaryContainer
-    }
+    // attention-grabbing tonal background — content colors must follow the
+    // container role or dark-theme contrast breaks.
+    val palette = widgetPalette(state.specialType)
+    val bg = palette.bg
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -103,7 +127,7 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
             .clickable(actionRunCallback<RefreshAction>()),
     ) {
         when (state.status) {
-            WidgetState.Status.OK -> AircraftCard(state, photo)
+            WidgetState.Status.OK -> AircraftCard(state, photo, palette)
             WidgetState.Status.NO_AIRCRAFT -> EmptyMessage("No aircraft nearby")
             WidgetState.Status.NO_LOCATION -> EmptyMessage("Location unavailable — tap to retry")
             else -> EmptyMessage("Airblock — tap to refresh")
@@ -139,7 +163,7 @@ private fun StatusBadge(state: WidgetState) {
         Box(
             modifier = GlanceModifier
                 .background(GlanceTheme.colors.surfaceVariant)
-                .cornerRadius(10.dp)
+                .cornerRadius(12.dp)
                 .padding(4.dp),
         ) {
             if (showSpinner) {
@@ -160,7 +184,7 @@ private fun StatusBadge(state: WidgetState) {
 }
 
 @Composable
-private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
+private fun AircraftCard(state: WidgetState, photo: Bitmap?, palette: WidgetPalette) {
     // Planespotters thumbnails are 3:2 landscape (419x280) — size the photo
     // box to exactly that ratio from the real top-row height.
     val widgetSize = LocalSize.current
@@ -204,7 +228,7 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
                         style = TextStyle(
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
-                            color = GlanceTheme.colors.onSurface,
+                            color = palette.onBg,
                         ),
                         maxLines = 1,
                     )
@@ -214,7 +238,7 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
                         Row(
                             modifier = GlanceModifier
                                 .background(GlanceTheme.colors.error)
-                                .cornerRadius(10.dp)
+                                .cornerRadius(12.dp)
                                 .padding(horizontal = 6.dp, vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -227,7 +251,7 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
                             Spacer(GlanceModifier.width(3.dp))
                             Text(
                                 text = special.uppercase(),
-                                style = TextStyle(fontSize = 9.sp,
+                                style = TextStyle(fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = GlanceTheme.colors.onError),
                                 maxLines = 1,
@@ -239,7 +263,7 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
                     Text(
                         text = it,
                         style = TextStyle(fontSize = 12.sp,
-                            color = GlanceTheme.colors.onSurfaceVariant),
+                            color = palette.onBgVariant),
                         maxLines = 1,
                     )
                 }
@@ -265,8 +289,8 @@ private fun RoutePill(state: WidgetState) {
         modifier = GlanceModifier
             .fillMaxWidth()
             .background(GlanceTheme.colors.secondaryContainer)
-            .cornerRadius(16.dp)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .cornerRadius(20.dp) // full pill: radius ≈ half the pill height
+            .padding(horizontal = 12.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Endpoint(state.originIata, state.originFlag, state.originCity,
@@ -288,7 +312,7 @@ private fun RoutePill(state: WidgetState) {
                 Text(
                     text = "ETA " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
                         .format(java.util.Date(eta)),
-                    style = TextStyle(fontSize = 9.sp,
+                    style = TextStyle(fontSize = 10.sp,
                         color = GlanceTheme.colors.onSecondaryContainer),
                     maxLines = 1,
                 )

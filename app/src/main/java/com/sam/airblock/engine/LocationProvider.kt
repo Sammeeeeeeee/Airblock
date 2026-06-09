@@ -69,9 +69,13 @@ class LocationProvider(private val context: Context) {
 
     @Suppress("MissingPermission")
     private suspend fun balancedFix(): Location? = suspendCancellableCoroutine { cont ->
-        fused.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+        // Cancellable token: when our 10s timeout fires, the platform request
+        // must stop too instead of running the radio for up to 30 more seconds
+        val cts = com.google.android.gms.tasks.CancellationTokenSource()
+        fused.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token)
             .addOnSuccessListener { cont.resume(it) }
             .addOnFailureListener { cont.resume(null) }
+        cont.invokeOnCancellation { cts.cancel() }
     }
 
     companion object {

@@ -51,7 +51,7 @@ data class WidgetState(
 
     /** Render-relevant identity — used to skip widget redraws when nothing changed. */
     fun renderKey(): String = listOf(
-        status, callsign, typeName, altitudeFt, speedMph,
+        status, callsign, typeName, altitudeFt, onGround, speedMph,
         mach?.let { "%.2f".format(it) },
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
         originIata, destIata, photoPath,
@@ -81,5 +81,26 @@ object WidgetStateStore {
     suspend fun write(context: Context, state: WidgetState) {
         val raw = Http.json.encodeToString(WidgetState.serializer(), state)
         context.airblockStore.edit { it[KEY] = raw }
+    }
+
+    /**
+     * Atomic read-transform-write — the service loop, KeepAliveWorker and
+     * widget taps all mutate this state concurrently; doing the mutation
+     * inside one edit prevents lost flags. Returns previous and new state.
+     */
+    suspend fun update(
+        context: Context,
+        transform: (WidgetState) -> WidgetState,
+    ): Pair<WidgetState, WidgetState> {
+        var prev = WidgetState()
+        var next = WidgetState()
+        context.airblockStore.edit { p ->
+            prev = p[KEY]?.let {
+                runCatching { Http.json.decodeFromString<WidgetState>(it) }.getOrNull()
+            } ?: WidgetState()
+            next = transform(prev)
+            p[KEY] = Http.json.encodeToString(WidgetState.serializer(), next)
+        }
+        return prev to next
     }
 }

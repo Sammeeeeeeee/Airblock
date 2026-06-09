@@ -19,24 +19,27 @@ object EventLog {
 
     @Synchronized
     fun append(context: Context, message: String) {
-        val f = file(context)
-        f.appendText("${fmt.format(Date())}  $message\n")
-        if (f.length() > MAX_BYTES) {
-            val lines = f.readLines()
-            f.writeText(lines.takeLast(lines.size / 2).joinToString("\n") + "\n")
+        // Logging must never take the engine down (disk full etc.)
+        runCatching {
+            val f = file(context)
+            f.appendText("${fmt.format(Date())}  $message\n")
+            if (f.length() > MAX_BYTES) {
+                val lines = f.readLines()
+                f.writeText(lines.takeLast(lines.size / 2).joinToString("\n") + "\n")
+            }
         }
     }
 
     /** Newest first. */
     @Synchronized
-    fun read(context: Context, limit: Int = 200): List<String> {
+    fun read(context: Context, limit: Int = 200): List<String> = runCatching {
         val f = file(context)
-        if (!f.exists()) return emptyList()
-        return f.readLines().asReversed().take(limit)
-    }
+        if (!f.exists()) emptyList()
+        else f.readLines().asReversed().take(limit)
+    }.getOrDefault(emptyList())
 
     @Synchronized
     fun clear(context: Context) {
-        file(context).delete()
+        runCatching { file(context).delete() }
     }
 }

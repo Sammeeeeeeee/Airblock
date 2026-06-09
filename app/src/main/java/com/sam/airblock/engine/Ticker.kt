@@ -136,16 +136,23 @@ class Ticker(private val context: Context) {
                 photoCredit = photo?.photographer,
                 updatedAt = System.currentTimeMillis(),
             ))
-        } catch (e: IOException) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Not just IOException: a captive portal or CDN error page makes
+            // the JSON decode throw SerializationException — one bad body must
+            // never kill the engine permanently.
             consecutiveErrors++
             Log.w(TAG, "tick failed (${consecutiveErrors}x): ${e.message}")
             if (log) EventLog.append(context,
                 "update FAILED (×$consecutiveErrors) — ${e.message ?: e.javaClass.simpleName}")
             // Keep showing last good data, but surface the failure icon
-            val cur = WidgetStateStore.read(context)
-            publish(cur.copy(errorCount = consecutiveErrors, refreshing = false,
-                pausedReason = null,
-                lastError = e.message ?: e.javaClass.simpleName))
+            val (prev, next) = WidgetStateStore.update(context) {
+                it.copy(errorCount = consecutiveErrors, refreshing = false,
+                    pausedReason = null,
+                    lastError = e.message ?: e.javaClass.simpleName)
+            }
+            if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
         }
     }
 
@@ -184,10 +191,10 @@ class Ticker(private val context: Context) {
         }
 
     private suspend fun publish(state: WidgetState) {
-        val previous = WidgetStateStore.read(context)
-        WidgetStateStore.write(context, state)
+        // Atomic swap — concurrent writers (worker, tap) can't interleave
+        val (previous, next) = WidgetStateStore.update(context) { state }
         // Skip the RemoteViews churn when nothing the user can see has changed
-        if (previous.renderKey() != state.renderKey()) {
+        if (previous.renderKey() != next.renderKey()) {
             AirblockWidget().updateAll(context)
         }
     }

@@ -108,9 +108,19 @@ class Gates(private val context: Context) {
 
     /** Whether the user has granted Usage Access (Settings > Special app access). */
     fun hasUsageAccess(): Boolean {
-        val now = System.currentTimeMillis()
-        val events = usage.queryEvents(now - MAX_LOOKBACK_MS, now)
-        return events.hasNextEvent()
+        val appOps = context.getSystemService(android.app.AppOpsManager::class.java)
+        return when (appOps.unsafeCheckOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(), context.packageName,
+        )) {
+            android.app.AppOpsManager.MODE_ALLOWED -> true
+            // MODE_DEFAULT falls back to the event probe (rare)
+            android.app.AppOpsManager.MODE_DEFAULT -> {
+                val now = System.currentTimeMillis()
+                usage.queryEvents(now - MAX_LOOKBACK_MS, now).hasNextEvent()
+            }
+            else -> false
+        }
     }
 
     companion object {

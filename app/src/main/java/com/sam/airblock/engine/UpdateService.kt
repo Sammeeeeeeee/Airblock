@@ -33,6 +33,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.min
@@ -61,17 +62,32 @@ class UpdateService : Service() {
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            wake.value = System.currentTimeMillis()
+            wake.update { it + 1 } // counter, not wall time: same-ms bumps must not conflate
         }
     }
 
-    // Wi-Fi <-> mobile-data switches re-evaluate the per-network mode instantly
+    // Wi-Fi <-> mobile-data switches re-evaluate the per-network mode instantly.
+    // onCapabilitiesChanged fires constantly (signal changes etc.) — only bump
+    // the loop when the actual TRANSPORT flips.
     private val netCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) { wake.value = System.currentTimeMillis() }
-        override fun onLost(network: Network) { wake.value = System.currentTimeMillis() }
-        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-            wake.value = System.currentTimeMillis()
+        private var lastTransport: String? = null
+        private fun transportOf(caps: NetworkCapabilities?): String? = when {
+            caps == null -> null
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cell"
+            else -> "other"
         }
+        private fun maybeBump(transport: String?) {
+            if (transport != lastTransport) {
+                lastTransport = transport
+                wake.update { it + 1 }
+            }
+        }
+        override fun onAvailable(network: Network) = maybeBump("pending")
+        override fun onLost(network: Network) = maybeBump(null)
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
+            maybeBump(transportOf(caps))
     }
 
     override fun onCreate() {
@@ -94,7 +110,7 @@ class UpdateService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_TICK_NOW) {
             tickNowRequested.set(true)
-            wake.value = System.currentTimeMillis()
+            wake.update { it + 1 }
         }
         return START_STICKY
     }
@@ -114,10 +130,26 @@ class UpdateService : Service() {
 
     private suspend fun runLoop() {
         while (true) {
+            try {
+                runLoopIteration()?.let { return } // null = continue, Unit = stop
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The loop must survive ANY single failure — a dead loop with a
+                // live foreground service would silently freeze the widget.
+                Log.e(TAG, "loop iteration failed", e)
+                delay(15_000)
+            }
+        }
+    }
+
+    /** One gate-check/tick cycle. Returns non-null to stop the service. */
+    private suspend fun runLoopIteration(): Unit? {
+        run {
             if (!widgetPlaced()) {
                 Log.d(TAG, "no widget placed — stopping")
                 stopSelf()
-                return
+                return Unit
             }
             val forced = tickNowRequested.getAndSet(false)
             when {
@@ -126,7 +158,7 @@ class UpdateService : Service() {
                 forced && gates.screenOn() -> {
                     Log.d(TAG, "tap — forced tick")
                     logPhase("active", "manual refresh (tap)")
-                    tickAndWait(SettingsStore.read(this).intervalSec * 1000L)
+                    tickAndWait(SettingsStore.read(this).intervalSec * 1000L, force = true)
                 }
                 !gates.screenOn() || !gates.unlocked() || gates.powerSave() -> {
                     // Fully idle: wait for SCREEN_ON / USER_PRESENT / power-save
@@ -183,10 +215,21 @@ class UpdateService : Service() {
                 }
             }
         }
+        return null
     }
 
-    private suspend fun tickAndWait(intervalMs: Long) {
+    private var lastTickAt = 0L
+
+    private suspend fun tickAndWait(intervalMs: Long, force: Boolean = false) {
+        // Spurious wake-ups (screen/network events) must not shortcut the
+        // interval — wait out the remainder instead of ticking early.
+        val sinceLast = System.currentTimeMillis() - lastTickAt
+        if (!force && sinceLast < intervalMs) {
+            awaitWake(intervalMs - sinceLast)
+            return
+        }
         val started = System.currentTimeMillis()
+        lastTickAt = started
         ticker.tick()
         // One flaky request shouldn't slow the widget down: keep the normal
         // interval on the first failure, back off only when errors repeat.
@@ -215,11 +258,8 @@ class UpdateService : Service() {
 
     /** Surface/clear the "paused" status icon without touching the rest of the state. */
     private suspend fun setPausedFlag(reason: String?) {
-        val cur = WidgetStateStore.read(this)
-        if (cur.pausedReason != reason) {
-            WidgetStateStore.write(this, cur.copy(pausedReason = reason))
-            AirblockWidget().updateAll(this)
-        }
+        val (prev, next) = WidgetStateStore.update(this) { it.copy(pausedReason = reason) }
+        if (prev.pausedReason != next.pausedReason) AirblockWidget().updateAll(this)
     }
 
     private fun widgetPlaced(): Boolean =
