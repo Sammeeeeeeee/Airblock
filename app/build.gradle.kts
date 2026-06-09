@@ -25,6 +25,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Personal app: debug-key signing keeps release APKs installable.
+            // CI restores a persistent keystore from DEBUG_KEYSTORE_B64 when set.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -49,6 +52,9 @@ dependencies {
     // Settings screen (plain Compose, only loaded when the activity opens)
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.material3:material3:1.3.1")
+    // Pin a modern fragment: a stale transitive version trips the
+    // InvalidFragmentVersionForActivityResult lint check on release builds
+    implementation("androidx.fragment:fragment:1.8.5")
 
     // Data + networking — deliberately minimal
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
