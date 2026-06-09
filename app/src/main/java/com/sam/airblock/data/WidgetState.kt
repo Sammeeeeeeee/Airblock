@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 
 val Context.airblockStore by preferencesDataStore(name = "airblock")
@@ -36,6 +38,7 @@ data class WidgetState(
     val refreshing: Boolean = false,
     val pausedReason: String? = null,  // e.g. "battery saver"
     val errorCount: Int = 0,           // consecutive failed refreshes
+    val lastError: String? = null,     // human-readable cause of the last failure
 ) {
     enum class Status { OK, NO_AIRCRAFT, NO_LOCATION, NO_DATA, ERROR }
 
@@ -56,6 +59,14 @@ object WidgetStateStore {
         return runCatching { Http.json.decodeFromString<WidgetState>(raw) }
             .getOrDefault(WidgetState())
     }
+
+    /** Live state stream — used by the in-app status card. */
+    fun flow(context: Context): Flow<WidgetState> =
+        context.airblockStore.data.map { p ->
+            p[KEY]?.let {
+                runCatching { Http.json.decodeFromString<WidgetState>(it) }.getOrNull()
+            } ?: WidgetState()
+        }
 
     suspend fun write(context: Context, state: WidgetState) {
         val raw = Http.json.encodeToString(WidgetState.serializer(), state)

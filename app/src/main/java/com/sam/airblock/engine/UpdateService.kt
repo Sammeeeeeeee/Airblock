@@ -109,6 +109,7 @@ class UpdateService : Service() {
                 }
                 !gates.launcherForeground() -> {
                     // Another app is open (Netflix etc.) — slow local re-check, no network
+                    Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in 30s")
                     delay(HIDDEN_RECHECK_MS)
                 }
                 else -> {

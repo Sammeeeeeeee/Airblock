@@ -45,6 +45,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,12 +53,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.sam.airblock.R
 import com.sam.airblock.data.Settings
 import com.sam.airblock.data.SettingsStore
+import com.sam.airblock.data.WidgetState
+import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.engine.Gates
 import com.sam.airblock.engine.UpdateService
 import kotlinx.coroutines.launch
@@ -215,6 +221,13 @@ private fun SettingsScreen(
                 Spacer(Modifier.height(16.dp))
             }
 
+            // ---- Live status (mirrors the widget's top-right badge) -------
+            val widgetState by WidgetStateStore.flow(context)
+                .collectAsState(initial = WidgetState())
+            SectionLabel("Status")
+            StatusCard(widgetState)
+            Spacer(Modifier.height(24.dp))
+
             // ---- Permissions ---------------------------------------------
             SectionLabel("Setup")
             PermissionRow(
@@ -313,6 +326,67 @@ private fun SettingsScreen(
                 )
             }
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+private fun StatusCard(state: WidgetState) {
+    val ageMin = if (state.updatedAt > 0)
+        ((System.currentTimeMillis() - state.updatedAt) / 60_000).toInt() else -1
+
+    data class StatusUi(val icon: Int, val title: String, val detail: String,
+        val container: Color, val content: Color)
+
+    val cs = MaterialTheme.colorScheme
+    val ui = when {
+        state.refreshing -> StatusUi(
+            R.drawable.ic_sync, "Refreshing…",
+            "Fetching the nearest aircraft right now.",
+            cs.primaryContainer, cs.onPrimaryContainer)
+        state.pausedReason != null -> StatusUi(
+            R.drawable.ic_battery_saver, "Paused — ${state.pausedReason}",
+            "Refreshes resume automatically when battery saver turns off.",
+            cs.tertiaryContainer, cs.onTertiaryContainer)
+        state.errorCount > 0 -> StatusUi(
+            R.drawable.ic_warning, "Refresh failing (×${state.errorCount})",
+            "Last error: ${state.lastError ?: "network error"}. Retrying with backoff — " +
+                "old data stays on the widget meanwhile.",
+            cs.errorContainer, cs.onErrorContainer)
+        ageMin < 0 -> StatusUi(
+            R.drawable.ic_flight, "Waiting for first refresh",
+            "Add the widget to your home screen, or tap it to refresh now.",
+            cs.surfaceVariant, cs.onSurfaceVariant)
+        ageMin >= 2 -> StatusUi(
+            R.drawable.ic_clock, "Data is stale",
+            "Last update $ageMin min ago. The widget only refreshes while your " +
+                "home screen is visible.",
+            cs.surfaceVariant, cs.onSurfaceVariant)
+        else -> StatusUi(
+            R.drawable.ic_flight, "Up to date",
+            listOfNotNull(state.callsign, "updated under a minute ago")
+                .joinToString(" · "),
+            cs.secondaryContainer, cs.onSecondaryContainer)
+    }
+
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = ui.container,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painterResource(ui.icon), null,
+                tint = ui.content,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(ui.title, style = MaterialTheme.typography.titleMedium,
+                    color = ui.content)
+                Text(ui.detail, style = MaterialTheme.typography.bodySmall,
+                    color = ui.content)
+            }
         }
     }
 }

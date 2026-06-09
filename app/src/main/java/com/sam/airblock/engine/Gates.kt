@@ -17,17 +17,23 @@ class Gates(private val context: Context) {
     private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val usage = context.getSystemService(UsageStatsManager::class.java)
 
-    // Stateful foreground tracking: we only query usage events SINCE the last
-    // check (a 15–30 s window) and carry the answer forward, so sitting inside
-    // Netflix for an hour stays correctly detected with tiny incremental queries.
+    // Stateful foreground tracking with OVERLAPPING query windows: usage events
+    // are often written to the stats DB seconds late, so a strictly incremental
+    // window would miss them permanently and wedge the gate. Re-reading a bit
+    // of already-seen history is idempotent (we just take the latest event).
     private var lastQueryTime = 0L
     private var lastForegroundPkg: String? = null
 
-    /** Default launcher package, resolved once (changes only if the user switches launchers). */
-    val launcherPackage: String? by lazy {
+    /** Every installed launcher — the user may run a non-default one (Niagara etc.). */
+    val launcherPackages: Set<String> by lazy {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        context.packageManager.resolveActivity(intent, 0)?.activityInfo?.packageName
+        context.packageManager.queryIntentActivities(intent, 0)
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
     }
+
+    /** Last known foreground package — for diagnostics. */
+    fun foregroundPackage(): String? = lastForegroundPkg
 
     fun screenOn(): Boolean = power.isInteractive
 
@@ -43,24 +49,27 @@ class Gates(private val context: Context) {
      * (gated by screen-on only) instead of silently never updating.
      */
     fun launcherForeground(): Boolean {
-        val launcher = launcherPackage ?: return true
+        if (launcherPackages.isEmpty()) return true
         val now = System.currentTimeMillis()
-        // First call (or after long idle): look back far enough to find the
+        // Cover the gap since the previous query plus a generous overlap for
+        // late-written events; first call looks back far enough to find the
         // current foreground app's launch event.
-        val from = if (lastQueryTime == 0L || now - lastQueryTime > MAX_LOOKBACK_MS)
-            now - MAX_LOOKBACK_MS else lastQueryTime
-        val events = usage.queryEvents(from, now)
+        val lookback = if (lastQueryTime == 0L) MAX_LOOKBACK_MS
+        else (now - lastQueryTime + OVERLAP_MS).coerceIn(MIN_WINDOW_MS, MAX_LOOKBACK_MS)
+        val events = usage.queryEvents(now - lookback, now)
         val e = UsageEvents.Event()
+        var latest = 0L
         while (events.hasNextEvent()) {
             events.getNextEvent(e)
-            if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+            if (e.eventType == UsageEvents.Event.ACTIVITY_RESUMED && e.timeStamp >= latest) {
+                latest = e.timeStamp
                 lastForegroundPkg = e.packageName
             }
         }
         lastQueryTime = now
         val fg = lastForegroundPkg
             ?: return true // no usage access / no data — fail open to screen-on gating
-        return fg == launcher || fg == context.packageName
+        return fg in launcherPackages || fg == context.packageName
     }
 
     /** Whether the user has granted Usage Access (Settings > Special app access). */
@@ -72,5 +81,7 @@ class Gates(private val context: Context) {
 
     companion object {
         private const val MAX_LOOKBACK_MS = 4L * 60 * 60 * 1000
+        private const val MIN_WINDOW_MS = 3L * 60 * 1000
+        private const val OVERLAP_MS = 60L * 1000
     }
 }

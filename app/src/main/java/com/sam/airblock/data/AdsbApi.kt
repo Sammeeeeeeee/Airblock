@@ -1,9 +1,11 @@
 package com.sam.airblock.data
 
 import kotlinx.serialization.json.Json
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.net.Inet6Address
 import java.util.concurrent.TimeUnit
 
 /**
@@ -20,6 +22,13 @@ object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
+        // Prefer IPv4: on networks with broken IPv6 the v6 attempt eats the
+        // whole connect timeout before falling back (OkHttp 4 has no happy
+        // eyeballs), which showed up as recurring tick timeouts on-device.
+        .dns(object : Dns {
+            override fun lookup(hostname: String) =
+                Dns.SYSTEM.lookup(hostname).sortedBy { it is Inet6Address }
+        })
         // Keep the connection to api.adsb.lol warm across ticks.
         .addInterceptor { chain ->
             chain.proceed(

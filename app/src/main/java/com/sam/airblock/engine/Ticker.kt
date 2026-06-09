@@ -72,8 +72,9 @@ class Ticker(private val context: Context) {
 
             val photo = photos.photoFor(ac.hex)
 
-            Log.d(TAG, "tick: ${callsign ?: ac.hex} dst=${ac.dst}nm " +
-                "route=${route?.airportCodes ?: "?"} photo=${photo != null}")
+            Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
+                fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
+                route?.airportCodes ?: "?", photo != null))
 
             publish(WidgetState(
                 status = WidgetState.Status.OK,
@@ -106,7 +107,8 @@ class Ticker(private val context: Context) {
             // Keep showing last good data, but surface the failure icon
             val cur = WidgetStateStore.read(context)
             publish(cur.copy(errorCount = consecutiveErrors, refreshing = false,
-                pausedReason = null))
+                pausedReason = null,
+                lastError = e.message ?: e.javaClass.simpleName))
         }
     }
 

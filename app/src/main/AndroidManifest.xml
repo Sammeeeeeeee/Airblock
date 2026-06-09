@@ -17,6 +17,15 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Android 11+ package visibility: needed so we can enumerate installed
+         launchers for the "is the home screen visible" gate. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"

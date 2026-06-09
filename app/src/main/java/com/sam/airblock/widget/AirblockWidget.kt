@@ -26,6 +26,7 @@ import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
@@ -68,8 +69,9 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
-            .background(GlanceTheme.colors.surface)
-            .cornerRadius(28.dp)
+            .background(GlanceTheme.colors.widgetBackground)
+            // Match the corner radius the launcher clips widgets to
+            .cornerRadius(android.R.dimen.system_app_widget_background_radius)
             .padding(10.dp)
             .clickable(actionRunCallback<RefreshAction>()),
     ) {
@@ -144,7 +146,7 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
             Text(
                 text = state.callsign ?: "—",
                 style = TextStyle(
-                    fontSize = 24.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     color = GlanceTheme.colors.onSurface,
                 ),
@@ -157,46 +159,69 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
                     maxLines = 1,
                 )
             }
-            Spacer(GlanceModifier.height(4.dp))
-            RouteRow(state)
+            Spacer(GlanceModifier.defaultWeight())
+            RoutePill(state)
             Spacer(GlanceModifier.defaultWeight())
             ChipsRow(state)
         }
     }
 }
 
+/**
+ * Expressive tonal pill spanning the full width: origin left, dotted flight
+ * path stretching between, destination right — no dead space.
+ */
 @Composable
-private fun RouteRow(state: WidgetState) {
+private fun RoutePill(state: WidgetState) {
     if (state.originIata == null && state.destIata == null) return
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Endpoint(state.originIata, state.originFlag, state.originCity)
-        Image(
-            provider = ImageProvider(R.drawable.ic_route_connector),
-            contentDescription = "to",
-            colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
-            modifier = GlanceModifier.width(52.dp).height(13.dp)
-                .padding(horizontal = 4.dp),
-        )
-        Endpoint(state.destIata, state.destFlag, state.destCity)
+    Row(
+        modifier = GlanceModifier
+            .fillMaxWidth()
+            .background(GlanceTheme.colors.secondaryContainer)
+            .cornerRadius(16.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Endpoint(state.originIata, state.originFlag, state.originCity,
+            horizontal = Alignment.Start)
+        Box(
+            modifier = GlanceModifier.defaultWeight().padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                provider = ImageProvider(R.drawable.ic_route_connector),
+                contentDescription = "to",
+                colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
+                modifier = GlanceModifier.width(56.dp).height(14.dp),
+            )
+        }
+        Endpoint(state.destIata, state.destFlag, state.destCity,
+            horizontal = Alignment.End)
     }
 }
 
 @Composable
-private fun Endpoint(iata: String?, flag: String?, city: String?) {
-    Column {
+private fun Endpoint(
+    iata: String?,
+    flag: String?,
+    city: String?,
+    horizontal: Alignment.Horizontal,
+) {
+    Column(horizontalAlignment = horizontal) {
         Text(
             text = listOfNotNull(iata ?: "?", flag?.takeIf { it.isNotEmpty() })
                 .joinToString(" "),
             style = TextStyle(
                 fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = GlanceTheme.colors.onSurface,
+                fontWeight = FontWeight.Bold,
+                color = GlanceTheme.colors.onSecondaryContainer,
             ),
         )
         city?.let {
             Text(
                 text = it,
-                style = TextStyle(fontSize = 10.sp, color = GlanceTheme.colors.onSurfaceVariant),
+                style = TextStyle(fontSize = 10.sp,
+                    color = GlanceTheme.colors.onSecondaryContainer),
                 maxLines = 1,
             )
         }
