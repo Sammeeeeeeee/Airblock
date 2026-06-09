@@ -10,6 +10,7 @@ import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.Squawk
+import com.sam.airblock.util.TypeNames
 import com.sam.airblock.util.Units
 import com.sam.airblock.widget.AirblockWidget
 import java.io.IOException
@@ -54,9 +55,17 @@ class Ticker(private val context: Context) {
             val route: RouteResult? = when {
                 callsign == null -> null
                 cachedRoute?.first == callsign -> cachedRoute?.second
-                else -> runCatching { api.route(callsign) }
-                    .getOrNull()
-                    .also { cachedRoute = callsign to it }
+                else -> try {
+                    // Cache only definitive answers (incl. a genuine 404 -> null);
+                    // transient failures must retry on the next tick
+                    api.route(callsign).also {
+                        cachedRoute = callsign to it
+                        if (it == null) Log.d(TAG, "route: none recorded for $callsign")
+                    }
+                } catch (e: IOException) {
+                    Log.w(TAG, "route lookup failed for $callsign: $e")
+                    null
+                }
             }
             val origin = route?.airports?.firstOrNull()
             val dest = route?.airports?.lastOrNull()?.takeIf { it !== origin }
@@ -69,8 +78,10 @@ class Ticker(private val context: Context) {
             publish(WidgetState(
                 status = WidgetState.Status.OK,
                 callsign = callsign ?: ac.r ?: ac.hex.uppercase(),
-                // desc is often absent from /v2/closest — fall back to the ICAO type code
-                typeName = ac.desc?.let { prettyType(it) } ?: ac.t,
+                // desc is often absent from /v2/closest — resolve the ICAO code
+                // to a full name offline, falling back to the raw code
+                typeName = ac.desc?.let { prettyType(it) }
+                    ?: TypeNames.name(ac.t) ?: ac.t,
                 typeCode = ac.t,
                 registration = ac.r,
                 hex = ac.hex,
@@ -92,7 +103,10 @@ class Ticker(private val context: Context) {
         } catch (e: IOException) {
             consecutiveErrors++
             Log.w(TAG, "tick failed (${consecutiveErrors}x): ${e.message}")
-            // Keep showing last good data; widget marks it stale by timestamp
+            // Keep showing last good data, but surface the failure icon
+            val cur = WidgetStateStore.read(context)
+            publish(cur.copy(errorCount = consecutiveErrors, refreshing = false,
+                pausedReason = null))
         }
     }
 

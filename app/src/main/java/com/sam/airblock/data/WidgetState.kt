@@ -32,6 +32,10 @@ data class WidgetState(
     val photoPath: String? = null,
     val photoCredit: String? = null,
     val updatedAt: Long = 0L,
+    // Non-standard conditions surfaced as a top-right status icon on the widget
+    val refreshing: Boolean = false,
+    val pausedReason: String? = null,  // e.g. "battery saver"
+    val errorCount: Int = 0,           // consecutive failed refreshes
 ) {
     enum class Status { OK, NO_AIRCRAFT, NO_LOCATION, NO_DATA, ERROR }
 
@@ -40,6 +44,7 @@ data class WidgetState(
         status, callsign, typeName, altitudeFt, speedMph,
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
         originIata, destIata, photoPath,
+        refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")
 }
 

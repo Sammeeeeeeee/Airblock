@@ -7,7 +7,6 @@ import android.location.Location
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.sam.airblock.data.SettingsStore
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -18,7 +17,7 @@ import kotlin.coroutines.resume
  *     last asked for location. Used as-is while fresher than [STALE_MS].
  *  2. One balanced-power fix (Wi-Fi/cell preferred, GPS last resort) at most
  *     once per [STALE_MS] window.
- *  3. The user's saved home coordinates as the final fallback.
+ *  3. The last fix this app ever saw, kept in memory.
  */
 class LocationProvider(private val context: Context) {
 
@@ -47,15 +46,13 @@ class LocationProvider(private val context: Context) {
                 }
             }
             // Stale cache still beats nothing for a 50 nm search radius
-            (cached ?: null)?.let {
+            cached?.let {
                 lastGood = it.latitude to it.longitude
                 return Fix(it.latitude, it.longitude)
             }
-            lastGood?.let { return Fix(it.first, it.second) }
         }
-        // 3. Saved home coordinates
-        val s = SettingsStore.read(context)
-        if (s.homeLat != null && s.homeLon != null) return Fix(s.homeLat, s.homeLon)
+        // 3. Whatever this app last saw
+        lastGood?.let { return Fix(it.first, it.second) }
         return null
     }
 

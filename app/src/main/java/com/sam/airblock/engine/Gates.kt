@@ -1,5 +1,6 @@
 package com.sam.airblock.engine
 
+import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -13,6 +14,7 @@ import android.os.PowerManager
 class Gates(private val context: Context) {
 
     private val power = context.getSystemService(PowerManager::class.java)
+    private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val usage = context.getSystemService(UsageStatsManager::class.java)
 
     // Stateful foreground tracking: we only query usage events SINCE the last
@@ -28,6 +30,9 @@ class Gates(private val context: Context) {
     }
 
     fun screenOn(): Boolean = power.isInteractive
+
+    /** True when the device is unlocked — the lock screen covers the widget. */
+    fun unlocked(): Boolean = !keyguard.isKeyguardLocked
 
     fun powerSave(): Boolean = power.isPowerSaveMode
 

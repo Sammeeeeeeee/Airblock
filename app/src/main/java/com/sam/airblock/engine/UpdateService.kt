@@ -14,8 +14,11 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
+import androidx.glance.appwidget.updateAll
 import com.sam.airblock.R
 import com.sam.airblock.data.SettingsStore
+import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.widget.AirblockWidget
 import com.sam.airblock.widget.AirblockWidgetReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +66,7 @@ class UpdateService : Service() {
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT) // unlock — leave idle without waiting
             addAction("android.os.action.POWER_SAVE_MODE_CHANGED")
         })
         loop = scope.launch { runLoop() }
@@ -93,9 +97,13 @@ class UpdateService : Service() {
                 return
             }
             when {
-                !gates.screenOn() || gates.powerSave() -> {
-                    // Fully idle: wait for SCREEN_ON / power-save broadcast, no polling at all
-                    Log.d(TAG, "gated (screen=${gates.screenOn()} powerSave=${gates.powerSave()}) — idle")
+                !gates.screenOn() || !gates.unlocked() || gates.powerSave() -> {
+                    // Fully idle: wait for SCREEN_ON / USER_PRESENT / power-save
+                    // broadcast, no polling at all. Battery saver is the only
+                    // gated state the user can actually see — flag it.
+                    Log.d(TAG, "gated (screen=${gates.screenOn()} unlocked=${gates.unlocked()} " +
+                        "powerSave=${gates.powerSave()}) — idle")
+                    if (gates.powerSave() && gates.screenOn()) setPausedFlag("battery saver")
                     val seen = wake.value
                     wake.first { it != seen }
                 }
@@ -114,6 +122,15 @@ class UpdateService : Service() {
                     withTimeoutOrNull(backoff) { wake.first { it != seen } }
                 }
             }
+        }
+    }
+
+    /** Surface/clear the "paused" status icon without touching the rest of the state. */
+    private suspend fun setPausedFlag(reason: String?) {
+        val cur = WidgetStateStore.read(this)
+        if (cur.pausedReason != reason) {
+            WidgetStateStore.write(this, cur.copy(pausedReason = reason))
+            AirblockWidget().updateAll(this)
         }
     }
 

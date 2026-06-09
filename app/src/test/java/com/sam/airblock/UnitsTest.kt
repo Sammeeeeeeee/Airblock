@@ -1,6 +1,7 @@
 package com.sam.airblock
 
 import com.sam.airblock.util.Squawk
+import com.sam.airblock.util.TypeNames
 import com.sam.airblock.util.Units
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -35,6 +36,14 @@ class UnitsTest {
         assertEquals("", Units.flagEmoji(null))
         assertEquals("", Units.flagEmoji("USA"))
         assertEquals("", Units.flagEmoji("1!"))
+    }
+
+    @Test fun typeNames() {
+        assertEquals("Boeing 737-800", TypeNames.name("B738"))
+        assertEquals("Airbus A320neo", TypeNames.name("a20n")) // case-insensitive
+        assertEquals("Embraer E175", TypeNames.name("E75L"))
+        assertNull(TypeNames.name("ZZZZ"))
+        assertNull(TypeNames.name(null))
     }
 
     @Test fun squawkClassifier() {
