@@ -332,8 +332,20 @@ private fun SettingsScreen(
 
 @Composable
 private fun StatusCard(state: WidgetState) {
-    val ageMin = if (state.updatedAt > 0)
-        ((System.currentTimeMillis() - state.updatedAt) / 60_000).toInt() else -1
+    // Tick once a second so the age readout is precise and live
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000)
+            now = System.currentTimeMillis()
+        }
+    }
+    val ageSec = if (state.updatedAt > 0) ((now - state.updatedAt) / 1000).toInt() else -1
+    fun age(): String = when {
+        ageSec < 0 -> "never"
+        ageSec < 120 -> "$ageSec s ago"
+        else -> "${ageSec / 60} min ago"
+    }
 
     data class StatusUi(val icon: Int, val title: String, val detail: String,
         val container: Color, val content: Color)
@@ -342,30 +354,30 @@ private fun StatusCard(state: WidgetState) {
     val ui = when {
         state.refreshing -> StatusUi(
             R.drawable.ic_sync, "Refreshing…",
-            "Fetching the nearest aircraft right now.",
+            "Fetching the nearest aircraft right now. Previous update: ${age()}.",
             cs.primaryContainer, cs.onPrimaryContainer)
         state.pausedReason != null -> StatusUi(
             R.drawable.ic_battery_saver, "Paused — ${state.pausedReason}",
-            "Refreshes resume automatically when battery saver turns off.",
+            "Refreshes resume automatically when battery saver turns off. " +
+                "Last update: ${age()}.",
             cs.tertiaryContainer, cs.onTertiaryContainer)
         state.errorCount > 0 -> StatusUi(
             R.drawable.ic_warning, "Refresh failing (×${state.errorCount})",
-            "Last error: ${state.lastError ?: "network error"}. Retrying with backoff — " +
-                "old data stays on the widget meanwhile.",
+            "Last error: ${state.lastError ?: "network error"}. Last successful " +
+                "update: ${age()}. Retrying — old data stays on the widget meanwhile.",
             cs.errorContainer, cs.onErrorContainer)
-        ageMin < 0 -> StatusUi(
+        ageSec < 0 -> StatusUi(
             R.drawable.ic_flight, "Waiting for first refresh",
             "Add the widget to your home screen, or tap it to refresh now.",
             cs.surfaceVariant, cs.onSurfaceVariant)
-        ageMin >= 2 -> StatusUi(
+        ageSec >= 120 -> StatusUi(
             R.drawable.ic_clock, "Data is stale",
-            "Last update $ageMin min ago. The widget only refreshes while your " +
+            "Last update ${age()}. The widget only refreshes while your " +
                 "home screen is visible.",
             cs.surfaceVariant, cs.onSurfaceVariant)
         else -> StatusUi(
             R.drawable.ic_flight, "Up to date",
-            listOfNotNull(state.callsign, "updated under a minute ago")
-                .joinToString(" · "),
+            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
             cs.secondaryContainer, cs.onSecondaryContainer)
     }
 

@@ -48,6 +48,7 @@ class UpdateService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
     private val wake = MutableStateFlow(0L) // bumped by receivers/taps to re-check gates now
+    private val tickNowRequested = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private lateinit var gates: Gates
     private lateinit var ticker: Ticker
@@ -74,7 +75,10 @@ class UpdateService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_TICK_NOW) wake.value = System.currentTimeMillis()
+        if (intent?.action == ACTION_TICK_NOW) {
+            tickNowRequested.set(true)
+            wake.value = System.currentTimeMillis()
+        }
         return START_STICKY
     }
 
@@ -96,7 +100,14 @@ class UpdateService : Service() {
                 stopSelf()
                 return
             }
+            val forced = tickNowRequested.getAndSet(false)
             when {
+                // A tap on the widget PROVES it is visible — refresh right now,
+                // bypassing the launcher/battery-saver gates for this one tick.
+                forced && gates.screenOn() -> {
+                    Log.d(TAG, "tap — forced tick")
+                    tickAndWait()
+                }
                 !gates.screenOn() || !gates.unlocked() || gates.powerSave() -> {
                     // Fully idle: wait for SCREEN_ON / USER_PRESENT / power-save
                     // broadcast, no polling at all. Battery saver is the only
@@ -104,26 +115,39 @@ class UpdateService : Service() {
                     Log.d(TAG, "gated (screen=${gates.screenOn()} unlocked=${gates.unlocked()} " +
                         "powerSave=${gates.powerSave()}) — idle")
                     if (gates.powerSave() && gates.screenOn()) setPausedFlag("battery saver")
-                    val seen = wake.value
-                    wake.first { it != seen }
+                    awaitWake(null)
                 }
                 !gates.launcherForeground() -> {
-                    // Another app is open (Netflix etc.) — slow local re-check, no network
+                    // Another app is open (Netflix etc.) — slow local re-check,
+                    // no network. Interruptible so a tap reacts instantly.
                     Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in 30s")
-                    delay(HIDDEN_RECHECK_MS)
+                    awaitWake(HIDDEN_RECHECK_MS)
                 }
-                else -> {
-                    val intervalMs = SettingsStore.read(this).intervalSec * 1000L
-                    ticker.tick()
-                    val backoff = if (ticker.consecutiveErrors > 0)
-                        min(ticker.consecutiveErrors, 4).let { intervalMs * (1 shl it) }
-                    else intervalMs
-                    // delay, but cut short if a tap/screen event bumps `wake`
-                    val seen = wake.value
-                    withTimeoutOrNull(backoff) { wake.first { it != seen } }
-                }
+                else -> tickAndWait()
             }
         }
+    }
+
+    private suspend fun tickAndWait() {
+        val intervalMs = SettingsStore.read(this).intervalSec * 1000L
+        val started = System.currentTimeMillis()
+        ticker.tick()
+        // One flaky request shouldn't slow the widget down: keep the normal
+        // interval on the first failure, back off only when errors repeat.
+        val errs = ticker.consecutiveErrors
+        val target = if (errs > 1)
+            min(intervalMs * (1 shl min(errs - 1, 3)), MAX_BACKOFF_MS)
+        else intervalMs
+        // True cadence: the network time counts toward the interval
+        val elapsed = System.currentTimeMillis() - started
+        awaitWake((target - elapsed).coerceAtLeast(1_000L))
+    }
+
+    /** Suspend until `wake` is bumped (tap/screen event), at most [timeoutMs]. */
+    private suspend fun awaitWake(timeoutMs: Long?) {
+        val seen = wake.value
+        if (timeoutMs == null) wake.first { it != seen }
+        else withTimeoutOrNull(timeoutMs) { wake.first { it != seen } }
     }
 
     /** Surface/clear the "paused" status icon without touching the rest of the state. */
@@ -162,6 +186,7 @@ class UpdateService : Service() {
         private const val CHANNEL_ID = "airblock_updates"
         private const val NOTIF_ID = 1
         private const val HIDDEN_RECHECK_MS = 30_000L
+        private const val MAX_BACKOFF_MS = 120_000L
         const val ACTION_TICK_NOW = "com.sam.airblock.TICK_NOW"
 
         /** Try to start the engine; false when Android denies a background FGS start. */
