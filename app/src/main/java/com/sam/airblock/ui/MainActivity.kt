@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +72,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.ui.text.font.FontFamily
 import com.sam.airblock.R
 import com.sam.airblock.data.EventLog
+import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.Settings
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
@@ -168,13 +170,17 @@ private fun SettingsScreen(
     var loaded by remember { mutableStateOf(false) }
     var radiusNm by remember { mutableStateOf(50f) }
     var intervalSec by remember { mutableStateOf(15) }
-    var logEnabled by remember { mutableStateOf(true) }
+    var logEnabled by remember { mutableStateOf(false) }
+    var wifiMode by remember { mutableStateOf(NetMode.NORMAL) }
+    var dataMode by remember { mutableStateOf(NetMode.NORMAL) }
 
     LaunchedEffect(Unit) {
         val s = SettingsStore.read(context)
         radiusNm = s.radiusNm.toFloat()
         intervalSec = s.intervalSec
         logEnabled = s.logEnabled
+        wifiMode = s.wifiMode
+        dataMode = s.dataMode
         loaded = true
     }
 
@@ -187,6 +193,8 @@ private fun SettingsScreen(
                     radiusNm = radiusNm.roundToInt().coerceIn(5, 250),
                     intervalSec = intervalSec,
                     logEnabled = logEnabled,
+                    wifiMode = wifiMode,
+                    dataMode = dataMode,
                 )
             )
             UpdateService.start(context, tickNow = true)
@@ -357,6 +365,13 @@ private fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    NetModeRow("On Wi-Fi", wifiMode) { wifiMode = it; save() }
+                    NetModeRow("On mobile data", dataMode) { dataMode = it; save() }
+                    Text(
+                        "Refreshing always pauses while the system Data Saver is on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -451,6 +466,30 @@ private fun StatusCard(state: WidgetState) {
                 Text(ui.detail, style = MaterialTheme.typography.bodySmall,
                     color = ui.content)
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NetModeRow(label: String, mode: NetMode, onChange: (NetMode) -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        val options = listOf(
+            NetMode.NORMAL to "Normal",
+            NetMode.SLOW to "10 min",
+            NetMode.OFF to "Off",
+        )
+        options.forEachIndexed { i, (value, text) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onChange(value) },
+                shape = SegmentedButtonDefaults.itemShape(i, options.size),
+            ) { Text(text) }
         }
     }
 }

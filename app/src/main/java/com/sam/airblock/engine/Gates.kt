@@ -6,6 +6,8 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.PowerManager
 
 /**
@@ -17,6 +19,7 @@ class Gates(private val context: Context) {
     private val power = context.getSystemService(PowerManager::class.java)
     private val keyguard = context.getSystemService(KeyguardManager::class.java)
     private val usage = context.getSystemService(UsageStatsManager::class.java)
+    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
 
     // Stateful foreground tracking with OVERLAPPING query windows: usage events
     // are often written to the stats DB seconds late, so a strictly incremental
@@ -84,6 +87,24 @@ class Gates(private val context: Context) {
         ActivityManager.getMyMemoryState(info)
         return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
+
+    /** "wifi", "cell", "other", or null when offline. */
+    fun networkTransport(): String? {
+        val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+            ?: return null
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cell"
+            else -> "other"
+        }
+    }
+
+    /** System Data Saver active on a metered connection — do no network at all. */
+    fun dataSaverOn(): Boolean =
+        connectivity.isActiveNetworkMetered &&
+            connectivity.restrictBackgroundStatus ==
+            ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
 
     /** Whether the user has granted Usage Access (Settings > Special app access). */
     fun hasUsageAccess(): Boolean {

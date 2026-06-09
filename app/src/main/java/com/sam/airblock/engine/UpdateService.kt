@@ -12,11 +12,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.IBinder
 import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.R
 import com.sam.airblock.data.EventLog
+import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.widget.AirblockWidget
@@ -61,6 +65,15 @@ class UpdateService : Service() {
         }
     }
 
+    // Wi-Fi <-> mobile-data switches re-evaluate the per-network mode instantly
+    private val netCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { wake.value = System.currentTimeMillis() }
+        override fun onLost(network: Network) { wake.value = System.currentTimeMillis() }
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            wake.value = System.currentTimeMillis()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         gates = Gates(this)
@@ -72,6 +85,8 @@ class UpdateService : Service() {
             addAction(Intent.ACTION_USER_PRESENT) // unlock — leave idle without waiting
             addAction("android.os.action.POWER_SAVE_MODE_CHANGED")
         })
+        getSystemService(ConnectivityManager::class.java)
+            .registerDefaultNetworkCallback(netCallback)
         loop = scope.launch { runLoop() }
         Log.d(TAG, "service started")
     }
@@ -86,6 +101,8 @@ class UpdateService : Service() {
 
     override fun onDestroy() {
         unregisterReceiver(screenReceiver)
+        getSystemService(ConnectivityManager::class.java)
+            .unregisterNetworkCallback(netCallback)
         scope.cancel()
         Log.d(TAG, "service destroyed")
         super.onDestroy()
@@ -109,7 +126,7 @@ class UpdateService : Service() {
                 forced && gates.screenOn() -> {
                     Log.d(TAG, "tap — forced tick")
                     logPhase("active", "manual refresh (tap)")
-                    tickAndWait()
+                    tickAndWait(SettingsStore.read(this).intervalSec * 1000L)
                 }
                 !gates.screenOn() || !gates.unlocked() || gates.powerSave() -> {
                     // Fully idle: wait for SCREEN_ON / USER_PRESENT / power-save
@@ -135,16 +152,40 @@ class UpdateService : Service() {
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
                 else -> {
-                    Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"})")
-                    logPhase("active", "updates running")
-                    tickAndWait()
+                    // Per-network refresh mode + system Data Saver
+                    val s = SettingsStore.read(this)
+                    val mode = when {
+                        gates.dataSaverOn() -> NetMode.OFF
+                        gates.networkTransport() == "wifi" -> s.wifiMode
+                        gates.networkTransport() == "cell" -> s.dataMode
+                        else -> NetMode.NORMAL
+                    }
+                    when (mode) {
+                        NetMode.OFF -> {
+                            val why = if (gates.dataSaverOn()) "data saver"
+                            else "off on ${gates.networkTransport() ?: "this network"}"
+                            Log.d(TAG, "network-gated: $why")
+                            logPhase("netoff", "paused — $why")
+                            setPausedFlag(why)
+                            awaitWake(NET_RECHECK_MS)
+                        }
+                        NetMode.SLOW -> {
+                            Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"}) — slow mode")
+                            logPhase("active", "updates running (10 min mode)")
+                            tickAndWait(SLOW_INTERVAL_MS)
+                        }
+                        NetMode.NORMAL -> {
+                            Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"})")
+                            logPhase("active", "updates running")
+                            tickAndWait(s.intervalSec * 1000L)
+                        }
+                    }
                 }
             }
         }
     }
 
-    private suspend fun tickAndWait() {
-        val intervalMs = SettingsStore.read(this).intervalSec * 1000L
+    private suspend fun tickAndWait(intervalMs: Long) {
         val started = System.currentTimeMillis()
         ticker.tick()
         // One flaky request shouldn't slow the widget down: keep the normal
@@ -209,6 +250,8 @@ class UpdateService : Service() {
         private const val NOTIF_ID = 1
         private const val HIDDEN_RECHECK_MS = 30_000L
         private const val MAX_BACKOFF_MS = 120_000L
+        private const val NET_RECHECK_MS = 5L * 60 * 1000
+        private const val SLOW_INTERVAL_MS = 10L * 60 * 1000
         const val ACTION_TICK_NOW = "com.sam.airblock.TICK_NOW"
 
         /** Try to start the engine; false when Android denies a background FGS start. */

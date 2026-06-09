@@ -361,7 +361,8 @@ private fun Endpoint(
 
 @Composable
 private fun ChipsRow(state: WidgetState) {
-    // Chips share the full widget width equally
+    // Chips wrap their content so nothing truncates; the reg chip (least
+    // important) absorbs whatever width is left over.
     Row(modifier = GlanceModifier.fillMaxWidth()) {
         // Emergency squawk leads the row in error colors
         state.squawkAlert?.let {
@@ -370,7 +371,6 @@ private fun ChipsRow(state: WidgetState) {
                 label = it,
                 bg = GlanceTheme.colors.errorContainer,
                 fg = GlanceTheme.colors.onErrorContainer,
-                modifier = GlanceModifier.defaultWeight(),
             )
             Spacer(GlanceModifier.width(5.dp))
         }
@@ -379,7 +379,6 @@ private fun ChipsRow(state: WidgetState) {
             label = if (state.onGround) "ground" else Units.formatAltitude(state.altitudeFt),
             bg = GlanceTheme.colors.secondaryContainer,
             fg = GlanceTheme.colors.onSecondaryContainer,
-            modifier = GlanceModifier.defaultWeight(),
         )
         Spacer(GlanceModifier.width(5.dp))
         // Speed and Mach combined in one pill (Glance can't do per-corner
@@ -387,10 +386,9 @@ private fun ChipsRow(state: WidgetState) {
         Chip(
             icon = R.drawable.ic_speed,
             label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
-                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
+                (state.mach?.let { "·M" + "%.2f".format(it).trimStart('0') } ?: ""),
             bg = GlanceTheme.colors.tertiaryContainer,
             fg = GlanceTheme.colors.onTertiaryContainer,
-            modifier = GlanceModifier.defaultWeight(),
         )
         Spacer(GlanceModifier.width(5.dp))
         Chip(
@@ -398,7 +396,6 @@ private fun ChipsRow(state: WidgetState) {
             label = state.distanceKm?.let { Units.formatKm(it) } ?: "—",
             bg = GlanceTheme.colors.primaryContainer,
             fg = GlanceTheme.colors.onPrimaryContainer,
-            modifier = GlanceModifier.defaultWeight(),
         )
         state.registration?.let { reg ->
             Spacer(GlanceModifier.width(5.dp))
