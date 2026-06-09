@@ -59,13 +59,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.coroutineScope
+import androidx.compose.material3.Switch
+import androidx.compose.ui.text.font.FontFamily
 import com.sam.airblock.R
+import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.Settings
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.engine.Gates
 import com.sam.airblock.engine.UpdateService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -90,6 +95,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Opening the app is a foreground context — always allowed to (re)start the engine
         UpdateService.start(this, tickNow = true)
+        lifecycle.coroutineScope.launch {
+            if (SettingsStore.read(this@MainActivity).logEnabled)
+                EventLog.append(this@MainActivity, "app opened")
+        }
         setContent {
             val dark = isSystemInDarkTheme()
             val ctx = LocalContext.current
@@ -152,11 +161,13 @@ private fun SettingsScreen(
     var loaded by remember { mutableStateOf(false) }
     var radiusNm by remember { mutableStateOf(50f) }
     var intervalSec by remember { mutableStateOf(15) }
+    var logEnabled by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         val s = SettingsStore.read(context)
         radiusNm = s.radiusNm.toFloat()
         intervalSec = s.intervalSec
+        logEnabled = s.logEnabled
         loaded = true
     }
 
@@ -168,6 +179,7 @@ private fun SettingsScreen(
                 Settings(
                     radiusNm = radiusNm.roundToInt().coerceIn(5, 250),
                     intervalSec = intervalSec,
+                    logEnabled = logEnabled,
                 )
             )
             UpdateService.start(context, tickNow = true)
@@ -305,6 +317,64 @@ private fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+
+            // ---- Activity log ---------------------------------------------
+            SectionLabel("Activity")
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(20.dp), Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Activity log",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "What the engine did and when. Turning it off deletes the records.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = logEnabled,
+                            onCheckedChange = { on ->
+                                logEnabled = on
+                                save()
+                                if (!on) EventLog.clear(context)
+                            },
+                        )
+                    }
+                    if (logEnabled) {
+                        var events by remember { mutableStateOf(listOf<String>()) }
+                        LaunchedEffect(logEnabled) {
+                            while (true) {
+                                events = EventLog.read(context, limit = 60)
+                                delay(2000)
+                            }
+                        }
+                        Column {
+                            events.forEach { e ->
+                                Text(
+                                    e,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace),
+                                    color = if ("FAILED" in e)
+                                        MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (events.isEmpty()) {
+                                Text("No activity yet.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))

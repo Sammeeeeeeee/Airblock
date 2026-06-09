@@ -29,6 +29,12 @@ data class Aircraft(
     @SerialName("alt_baro") val altBaro: JsonPrimitive? = null,
     /** Ground speed in knots. */
     val gs: Double? = null,
+    /** Mach number, e.g. 0.82. */
+    val mach: Double? = null,
+    /** Emitter category, e.g. "A3" (large), "A7" (rotorcraft), "B6" (drone). */
+    val category: String? = null,
+    /** adsb.lol DB flags bitmask: 1=military, 2=interesting, 4=PIA, 8=LADD. */
+    val dbFlags: Long? = null,
     val squawk: String? = null,
     /** Distance from query point in nautical miles (closest endpoint only). */
     val dst: Double? = null,

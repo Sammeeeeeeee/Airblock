@@ -3,16 +3,20 @@ package com.sam.airblock.widget
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.LocalContext
 import androidx.glance.LocalSize
 import androidx.glance.Image
 import androidx.glance.ImageProvider
@@ -82,10 +86,17 @@ class AirblockWidget : GlanceAppWidget() {
 
 @Composable
 private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
+    // Non-standard aircraft (military, police helicopters…) get an
+    // attention-grabbing tonal background.
+    val bg = when (state.specialType) {
+        null -> GlanceTheme.colors.widgetBackground
+        "Military" -> GlanceTheme.colors.errorContainer
+        else -> GlanceTheme.colors.tertiaryContainer
+    }
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
-            .background(GlanceTheme.colors.widgetBackground)
+            .background(bg)
             // Match the corner radius the launcher clips widgets to
             .cornerRadius(android.R.dimen.system_app_widget_background_radius)
             .padding(10.dp)
@@ -156,7 +167,8 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
     val hasRoute = state.originIata != null || state.destIata != null
     val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
         24.dp /* chips */ - (if (hasRoute) 50.dp else 6.dp) /* pill + spacers */
-    val photoWidth = topRowHeight * 1.5f
+    // Slightly wider than the source 3:2 so the airframe never gets side-cropped
+    val photoWidth = topRowHeight * 1.6f
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -186,15 +198,43 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
             }
             Spacer(GlanceModifier.width(12.dp))
             Column(modifier = GlanceModifier.defaultWeight()) {
-                Text(
-                    text = state.callsign ?: "—",
-                    style = TextStyle(
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GlanceTheme.colors.onSurface,
-                    ),
-                    maxLines = 1,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = state.callsign ?: "—",
+                        style = TextStyle(
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GlanceTheme.colors.onSurface,
+                        ),
+                        maxLines = 1,
+                    )
+                    // Non-standard aircraft badge next to the name
+                    state.specialType?.let { special ->
+                        Spacer(GlanceModifier.width(6.dp))
+                        Row(
+                            modifier = GlanceModifier
+                                .background(GlanceTheme.colors.error)
+                                .cornerRadius(10.dp)
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Image(
+                                provider = ImageProvider(R.drawable.ic_shield),
+                                contentDescription = special,
+                                colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
+                                modifier = GlanceModifier.size(10.dp),
+                            )
+                            Spacer(GlanceModifier.width(3.dp))
+                            Text(
+                                text = special.uppercase(),
+                                style = TextStyle(fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GlanceTheme.colors.onError),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
                 state.typeName?.let {
                     Text(
                         text = it,
@@ -213,12 +253,14 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?) {
 }
 
 /**
- * Expressive tonal pill spanning the full width: origin left, dotted flight
- * path stretching between, destination right — no dead space.
+ * Expressive tonal pill spanning the full width: origin left, the plane
+ * positioned along a dotted path at its real journey progress, ETA under it,
+ * destination right.
  */
 @Composable
 private fun RoutePill(state: WidgetState) {
     if (state.originIata == null && state.destIata == null) return
+    val context = LocalContext.current
     Row(
         modifier = GlanceModifier
             .fillMaxWidth()
@@ -229,20 +271,64 @@ private fun RoutePill(state: WidgetState) {
     ) {
         Endpoint(state.originIata, state.originFlag, state.originCity,
             horizontal = Alignment.Start)
-        Box(
+        Column(
             modifier = GlanceModifier.defaultWeight().padding(horizontal = 6.dp),
-            contentAlignment = Alignment.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            val tint = GlanceTheme.colors.primary.getColor(context).toArgb()
+            val pathBitmap = remember(state.routeProgress, tint) {
+                routeProgressBitmap(context, tint, state.routeProgress)
+            }
             Image(
-                provider = ImageProvider(R.drawable.ic_route_connector),
-                contentDescription = "to",
-                colorFilter = ColorFilter.tint(GlanceTheme.colors.primary),
-                modifier = GlanceModifier.width(56.dp).height(14.dp),
+                provider = ImageProvider(pathBitmap),
+                contentDescription = "route progress",
+                modifier = GlanceModifier.fillMaxWidth().height(14.dp),
             )
+            state.etaEpochMs?.let { eta ->
+                Text(
+                    text = "ETA " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                        .format(java.util.Date(eta)),
+                    style = TextStyle(fontSize = 9.sp,
+                        color = GlanceTheme.colors.onSecondaryContainer),
+                    maxLines = 1,
+                )
+            }
         }
         Endpoint(state.destIata, state.destFlag, state.destCity,
             horizontal = Alignment.End)
     }
+}
+
+/**
+ * Dotted flight path with the plane glyph drawn at the journey-progress
+ * fraction (defaults to centre when unknown).
+ */
+private fun routeProgressBitmap(context: Context, color: Int, progress: Float?): Bitmap {
+    val w = 480
+    val h = 64
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+    val cy = h / 2f
+    val planeSize = 52
+    val px = (progress ?: 0.5f).coerceIn(0.07f, 0.93f) * w
+    var x = 12f
+    while (x < w - 10) {
+        if (kotlin.math.abs(x - px) > planeSize / 2f + 12) canvas.drawCircle(x, cy, 5f, paint)
+        x += 30f
+    }
+    context.getDrawable(R.drawable.ic_flight)?.mutate()?.let { d ->
+        d.setTint(color)
+        canvas.save()
+        canvas.rotate(90f, px, cy)
+        d.setBounds(
+            (px - planeSize / 2).toInt(), (cy - planeSize / 2).toInt(),
+            (px + planeSize / 2).toInt(), (cy + planeSize / 2).toInt(),
+        )
+        d.draw(canvas)
+        canvas.restore()
+    }
+    return bmp
 }
 
 @Composable
@@ -296,13 +382,31 @@ private fun ChipsRow(state: WidgetState) {
             modifier = GlanceModifier.defaultWeight(),
         )
         Spacer(GlanceModifier.width(5.dp))
-        Chip(
-            icon = R.drawable.ic_speed,
-            label = state.speedMph?.let { Units.formatSpeed(it) } ?: "—",
-            bg = GlanceTheme.colors.tertiaryContainer,
-            fg = GlanceTheme.colors.onTertiaryContainer,
-            modifier = GlanceModifier.defaultWeight(),
-        )
+        // Speed as a split chip: ground speed | Mach (when known)
+        Row(modifier = GlanceModifier.defaultWeight()) {
+            Chip(
+                icon = R.drawable.ic_speed,
+                label = state.speedMph?.let { Units.formatSpeed(it) } ?: "—",
+                bg = GlanceTheme.colors.tertiaryContainer,
+                fg = GlanceTheme.colors.onTertiaryContainer,
+                modifier = GlanceModifier.defaultWeight(),
+            )
+            state.mach?.let { m ->
+                Spacer(GlanceModifier.width(2.dp))
+                Box(
+                    modifier = GlanceModifier.background(GlanceTheme.colors.tertiaryContainer)
+                        .cornerRadius(12.dp).padding(horizontal = 5.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "M" + "%.2f".format(m).trimStart('0'), // 0.79 -> "M.79"
+                        style = TextStyle(fontSize = 10.sp,
+                            color = GlanceTheme.colors.onTertiaryContainer),
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
         Spacer(GlanceModifier.width(5.dp))
         Chip(
             icon = R.drawable.ic_distance,
@@ -311,6 +415,16 @@ private fun ChipsRow(state: WidgetState) {
             fg = GlanceTheme.colors.onPrimaryContainer,
             modifier = GlanceModifier.defaultWeight(),
         )
+        state.registration?.let { reg ->
+            Spacer(GlanceModifier.width(5.dp))
+            Chip(
+                icon = R.drawable.ic_tag,
+                label = reg,
+                bg = GlanceTheme.colors.surfaceVariant,
+                fg = GlanceTheme.colors.onSurfaceVariant,
+                modifier = GlanceModifier.defaultWeight(),
+            )
+        }
     }
 }
 

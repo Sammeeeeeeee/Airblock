@@ -4,11 +4,13 @@ import android.content.Context
 import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
+import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.PhotoRepo
 import com.sam.airblock.data.RouteResult
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
 import com.sam.airblock.util.Units
@@ -34,9 +36,11 @@ class Ticker(private val context: Context) {
 
     suspend fun tick() {
         val settings = SettingsStore.read(context)
+        val log = settings.logEnabled
         val fix = location.currentFix()
         if (fix == null) {
             Log.d(TAG, "tick: no location fix")
+            if (log) EventLog.append(context, "update skipped — no location fix")
             publish(WidgetState(status = WidgetState.Status.NO_LOCATION,
                 updatedAt = System.currentTimeMillis()))
             return
@@ -46,6 +50,7 @@ class Ticker(private val context: Context) {
             consecutiveErrors = 0
             if (ac == null) {
                 Log.d(TAG, "tick: no aircraft within ${settings.radiusNm} nm")
+                if (log) EventLog.append(context, "updated — no aircraft within ${settings.radiusNm} nm")
                 publish(WidgetState(status = WidgetState.Status.NO_AIRCRAFT,
                     updatedAt = System.currentTimeMillis()))
                 return
@@ -69,15 +74,38 @@ class Ticker(private val context: Context) {
             }
             // Multi-leg routes (e.g. SDF-DUB-STN-CGN): show the leg the plane
             // is actually flying, not the overall first/last airports.
-            val leg = pickLeg(route?.airports.orEmpty(), fix.lat, fix.lon)
+            val planeLat = ac.lat ?: fix.lat
+            val planeLon = ac.lon ?: fix.lon
+            val leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
             val origin = leg?.first
             val dest = leg?.second
+
+            // Journey progress + ETA from great-circle geometry and ground speed
+            var progress: Float? = null
+            var etaEpochMs: Long? = null
+            if (origin?.lat != null && origin.lon != null &&
+                dest?.lat != null && dest.lon != null
+            ) {
+                val fromOrigin = Units.haversineKm(origin.lat, origin.lon, planeLat, planeLon)
+                val toDest = Units.haversineKm(planeLat, planeLon, dest.lat, dest.lon)
+                if (fromOrigin + toDest > 1.0) {
+                    progress = (fromOrigin / (fromOrigin + toDest)).toFloat()
+                }
+                val gsKmh = (ac.gs ?: 0.0) * Units.NM_TO_KM
+                if (gsKmh > 150 && toDest > 2.0) {
+                    etaEpochMs = System.currentTimeMillis() +
+                        (toDest / gsKmh * 3_600_000).toLong()
+                }
+            }
 
             val photo = photos.photoFor(ac.hex)
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
                 fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
                 route?.airportCodes ?: "?", photo != null))
+            if (log) EventLog.append(context,
+                "updated — ${callsign ?: ac.hex}" +
+                    (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
 
             publish(WidgetState(
                 status = WidgetState.Status.OK,
@@ -92,7 +120,11 @@ class Ticker(private val context: Context) {
                 altitudeFt = ac.altitudeFt,
                 onGround = ac.onGround,
                 speedMph = ac.gs?.let { Units.ktsToMph(it) },
+                mach = ac.mach,
                 distanceKm = ac.dst?.let { Units.nmToKm(it) },
+                routeProgress = progress,
+                etaEpochMs = etaEpochMs,
+                specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 squawkAlert = Squawk.emergencyLabel(ac.squawk),
                 originIata = origin?.iata,
                 originCity = origin?.location,
@@ -107,6 +139,8 @@ class Ticker(private val context: Context) {
         } catch (e: IOException) {
             consecutiveErrors++
             Log.w(TAG, "tick failed (${consecutiveErrors}x): ${e.message}")
+            if (log) EventLog.append(context,
+                "update FAILED (×$consecutiveErrors) — ${e.message ?: e.javaClass.simpleName}")
             // Keep showing last good data, but surface the failure icon
             val cur = WidgetStateStore.read(context)
             publish(cur.copy(errorCount = consecutiveErrors, refreshing = false,

@@ -1,5 +1,6 @@
 package com.sam.airblock
 
+import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
 import com.sam.airblock.util.Units
@@ -50,6 +51,15 @@ class UnitsTest {
         assertEquals("Embraer E175", TypeNames.name("E75L"))
         assertNull(TypeNames.name("ZZZZ"))
         assertNull(TypeNames.name(null))
+    }
+
+    @Test fun specialTypeClassifier() {
+        assertEquals("Military", SpecialType.classify("A3", 1L))   // dbFlags bit 1
+        assertEquals("Military", SpecialType.classify(null, 3L))
+        assertEquals("Helicopter", SpecialType.classify("A7", 0L))
+        assertEquals("Drone", SpecialType.classify("B6", null))
+        assertNull(SpecialType.classify("A3", 0L))                  // ordinary airliner
+        assertNull(SpecialType.classify(null, null))
     }
 
     @Test fun squawkClassifier() {

@@ -41,6 +41,27 @@ object Units {
     }
 }
 
+/**
+ * Non-standard aircraft classification (military, police helicopters, drones…)
+ * from the ADS-B emitter category + adsb.lol database flags.
+ */
+object SpecialType {
+    fun classify(category: String?, dbFlags: Long?): String? {
+        if (dbFlags != null && (dbFlags and 1L) != 0L) return "Military"
+        return when (category?.trim()?.uppercase()) {
+            "A7" -> "Helicopter"
+            "B1" -> "Glider"
+            "B2" -> "Airship"
+            "B4" -> "Ultralight"
+            "B6" -> "Drone"
+            "B7" -> "Spacecraft"
+            "C1" -> "Emergency vehicle"
+            "C2" -> "Service vehicle"
+            else -> null
+        }
+    }
+}
+
 /** Emergency squawk classification — only these are "not normal" per spec. */
 object Squawk {
     private val EMERGENCIES = mapOf(

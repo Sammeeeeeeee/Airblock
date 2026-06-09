@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.R
+import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.widget.AirblockWidget
@@ -52,6 +53,7 @@ class UpdateService : Service() {
 
     private lateinit var gates: Gates
     private lateinit var ticker: Ticker
+    private var lastPhase: String? = null
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -106,6 +108,7 @@ class UpdateService : Service() {
                 // bypassing the launcher/battery-saver gates for this one tick.
                 forced && gates.screenOn() -> {
                     Log.d(TAG, "tap — forced tick")
+                    logPhase("active", "manual refresh (tap)")
                     tickAndWait()
                 }
                 !gates.screenOn() || !gates.unlocked() || gates.powerSave() -> {
@@ -114,16 +117,27 @@ class UpdateService : Service() {
                     // gated state the user can actually see — flag it.
                     Log.d(TAG, "gated (screen=${gates.screenOn()} unlocked=${gates.unlocked()} " +
                         "powerSave=${gates.powerSave()}) — idle")
-                    if (gates.powerSave() && gates.screenOn()) setPausedFlag("battery saver")
+                    when {
+                        gates.powerSave() && gates.screenOn() -> {
+                            setPausedFlag("battery saver")
+                            logPhase("powersave", "paused — battery saver")
+                        }
+                        !gates.screenOn() -> logPhase("screenoff", "paused — screen off")
+                        else -> logPhase("locked", "paused — locked")
+                    }
                     awaitWake(null)
                 }
                 !gates.launcherForeground() -> {
                     // Another app is open (Netflix etc.) — slow local re-check,
                     // no network. Interruptible so a tap reacts instantly.
                     Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in 30s")
+                    logPhase("hidden", "paused — ${gates.foregroundPackage() ?: "another app"} in front")
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
-                else -> tickAndWait()
+                else -> {
+                    logPhase("active", "updates running")
+                    tickAndWait()
+                }
             }
         }
     }
@@ -141,6 +155,13 @@ class UpdateService : Service() {
         // True cadence: the network time counts toward the interval
         val elapsed = System.currentTimeMillis() - started
         awaitWake((target - elapsed).coerceAtLeast(1_000L))
+    }
+
+    /** Activity-log a phase transition exactly once. */
+    private suspend fun logPhase(phase: String, message: String) {
+        if (phase == lastPhase) return
+        lastPhase = phase
+        if (SettingsStore.read(this).logEnabled) EventLog.append(this, message)
     }
 
     /** Suspend until `wake` is bumped (tap/screen event), at most [timeoutMs]. */

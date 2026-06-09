@@ -23,7 +23,14 @@ data class WidgetState(
     val altitudeFt: Int? = null,
     val onGround: Boolean = false,
     val speedMph: Int? = null,
+    val mach: Double? = null,
     val distanceKm: Double? = null,
+    /** 0..1 fraction of the current leg already flown, when route is known. */
+    val routeProgress: Float? = null,
+    /** Estimated arrival at destination (epoch ms), from distance/speed. */
+    val etaEpochMs: Long? = null,
+    /** Non-standard aircraft type ("Military", "Helicopter", …) or null. */
+    val specialType: String? = null,
     val squawkAlert: String? = null,   // "7700 EMERGENCY" or null
     val originIata: String? = null,
     val originCity: String? = null,
@@ -45,8 +52,11 @@ data class WidgetState(
     /** Render-relevant identity — used to skip widget redraws when nothing changed. */
     fun renderKey(): String = listOf(
         status, callsign, typeName, altitudeFt, speedMph,
+        mach?.let { "%.2f".format(it) },
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
         originIata, destIata, photoPath,
+        routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
+        specialType, registration,
         refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")
 }
