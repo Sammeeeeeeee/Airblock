@@ -38,6 +38,12 @@ class UnitsTest {
         assertEquals("", Units.flagEmoji("1!"))
     }
 
+    @Test fun haversine() {
+        // JFK -> LAX is ~3,974 km
+        assertEquals(3974.0, Units.haversineKm(40.6413, -73.7781, 33.9425, -118.408), 50.0)
+        assertEquals(0.0, Units.haversineKm(51.5, -0.1, 51.5, -0.1), 1e-9)
+    }
+
     @Test fun typeNames() {
         assertEquals("Boeing 737-800", TypeNames.name("B738"))
         assertEquals("Airbus A320neo", TypeNames.name("a20n")) // case-insensitive

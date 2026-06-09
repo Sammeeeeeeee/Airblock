@@ -67,8 +67,11 @@ class Ticker(private val context: Context) {
                     null
                 }
             }
-            val origin = route?.airports?.firstOrNull()
-            val dest = route?.airports?.lastOrNull()?.takeIf { it !== origin }
+            // Multi-leg routes (e.g. SDF-DUB-STN-CGN): show the leg the plane
+            // is actually flying, not the overall first/last airports.
+            val leg = pickLeg(route?.airports.orEmpty(), fix.lat, fix.lon)
+            val origin = leg?.first
+            val dest = leg?.second
 
             val photo = photos.photoFor(ac.hex)
 
@@ -110,6 +113,34 @@ class Ticker(private val context: Context) {
                 pausedReason = null,
                 lastError = e.message ?: e.javaClass.simpleName))
         }
+    }
+
+    /**
+     * The consecutive airport pair the plane is currently between — the leg
+     * with the smallest detour (dist-to-A + dist-to-B − leg length).
+     */
+    private fun pickLeg(
+        airports: List<com.sam.airblock.data.RouteAirport>,
+        lat: Double,
+        lon: Double,
+    ): Pair<com.sam.airblock.data.RouteAirport, com.sam.airblock.data.RouteAirport>? {
+        if (airports.size < 2) return null
+        if (airports.size == 2) return airports[0] to airports[1]
+        var best: Pair<com.sam.airblock.data.RouteAirport, com.sam.airblock.data.RouteAirport>? = null
+        var bestScore = Double.MAX_VALUE
+        for (i in 0 until airports.size - 1) {
+            val a = airports[i]
+            val b = airports[i + 1]
+            if (a.lat == null || a.lon == null || b.lat == null || b.lon == null) continue
+            val score = Units.haversineKm(lat, lon, a.lat, a.lon) +
+                Units.haversineKm(lat, lon, b.lat, b.lon) -
+                Units.haversineKm(a.lat, a.lon, b.lat, b.lon)
+            if (score < bestScore) {
+                bestScore = score
+                best = a to b
+            }
+        }
+        return best ?: (airports.first() to airports.last())
     }
 
     /** "BOEING 737-900" -> "Boeing 737-900" */

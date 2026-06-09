@@ -58,6 +58,8 @@ data class RouteAirport(
     /** City, e.g. "New York". */
     val location: String? = null,
     @SerialName("countryiso2") val countryIso2: String? = null,
+    val lat: Double? = null,
+    val lon: Double? = null,
 )
 
 // ---------- planespotters.net /pub/photos/hex/{hex} ----------

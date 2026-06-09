@@ -20,6 +20,17 @@ object Units {
 
     fun formatSpeed(mph: Int): String = "$mph mph"
 
+    /** Great-circle distance in km. */
+    fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        return 2 * r * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    }
+
     /** "US" -> 🇺🇸 via regional indicator symbols. Empty for invalid input. */
     fun flagEmoji(countryIso2: String?): String {
         val cc = countryIso2?.trim()?.uppercase() ?: return ""
