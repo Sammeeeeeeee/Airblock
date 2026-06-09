@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Airblock</string>
+    <string name="widget_description">Nearest aircraft: callsign, route, altitude, speed and distance</string>
+    <string name="notif_channel_name">Widget updates</string>
+    <string name="notif_text">Updating nearest-aircraft widget</string>
+    <string name="no_aircraft">No aircraft nearby</string>
+    <string name="no_location">Location unavailable</string>
+</resources>
