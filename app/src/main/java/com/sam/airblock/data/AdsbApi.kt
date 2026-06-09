@@ -55,6 +55,12 @@ class AdsbApi(private val client: OkHttpClient = Http.client) {
         }
     }
 
+    // Route lookups run once per flight and the CDN can take ~7 s on a cold
+    // callsign — give them more headroom than the per-tick closest call.
+    private val routeClient by lazy {
+        client.newBuilder().readTimeout(15, TimeUnit.SECONDS).build()
+    }
+
     /**
      * Route for a callsign — a 302 to a static JSON file on adsb.lol's CDN,
      * so this is one cheap GET per flight. Null when the route is unknown (404).
@@ -64,7 +70,7 @@ class AdsbApi(private val client: OkHttpClient = Http.client) {
         val req = Request.Builder()
             .url("https://api.adsb.lol/api/0/route/${callsign.trim().uppercase()}")
             .build()
-        client.newCall(req).execute().use { resp ->
+        routeClient.newCall(req).execute().use { resp ->
             if (resp.code == 404) return null
             if (!resp.isSuccessful) throw IOException("route HTTP ${resp.code}")
             val body = resp.body?.string() ?: return null
