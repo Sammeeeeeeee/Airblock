@@ -13,8 +13,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.3.5"
+        versionCode = 11
+        versionName = "2.3.6"
     }
 
     buildTypes {
