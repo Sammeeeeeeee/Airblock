@@ -13,8 +13,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.3.6"
+        versionCode = 12
+        versionName = "2.4.0"
     }
 
     buildTypes {
@@ -46,12 +46,18 @@ android {
 
 dependencies {
     // Widget UI - compiles to RemoteViews, no runtime overhead
-    implementation("androidx.glance:glance-appwidget:1.1.1")
-    implementation("androidx.glance:glance-material3:1.1.1")
+    implementation("androidx.glance:glance-appwidget:1.2.0-rc01")
+    implementation("androidx.glance:glance-material3:1.2.0-rc01")
 
-    // Settings screen (plain Compose, only loaded when the activity opens)
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.compose.material3:material3:1.3.1")
+    // Settings screen (plain Compose, only loaded when the activity opens).
+    // material3 1.5.0-alphaXX is the M3 Expressive line: MaterialExpressiveTheme,
+    // MotionScheme (spring physics), ButtonGroup/ToggleButton, LoadingIndicator,
+    // wavy progress, MaterialShapes, flexible top app bars. alpha18 is the last
+    // build that compiles against compileSdk 35 / AGP 8.x.
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha18")
+    // material3 no longer pulls the icon set transitively
+    implementation("androidx.compose.material:material-icons-core:1.7.8")
     // Pin a modern fragment: a stale transitive version trips the
     // InvalidFragmentVersionForActivityResult lint check on release builds
     implementation("androidx.fragment:fragment:1.8.5")
