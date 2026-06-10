@@ -34,6 +34,7 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -140,9 +141,9 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?, airlineLogo: Bitma
 }
 
 /**
- * Top-right status indicator, always visible, priority:
- * refreshing (live spinner) > battery saver > failed refreshes > stale data
- * > live (auto-updates running).
+ * Top-right indicator for non-standard conditions only, priority:
+ * refreshing (live spinner) > battery saver > failed refreshes > stale data.
+ * Nothing is shown when all is well — a permanent icon is just clutter.
  */
 @Composable
 private fun StatusBadge(state: WidgetState) {
@@ -160,7 +161,7 @@ private fun StatusBadge(state: WidgetState) {
         isStale(state) -> {
             icon = R.drawable.ic_clock; tint = GlanceTheme.colors.outline
         }
-        else -> { icon = R.drawable.ic_sync; tint = GlanceTheme.colors.outline }
+        else -> return
     }
     Box(modifier = GlanceModifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
         Box(
@@ -198,17 +199,12 @@ private fun AircraftCard(
     val hasRouteRow = hasRoute || airlineLogo != null
     val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
         24.dp /* chips */ - (if (hasRouteRow) 50.dp else 6.dp) /* pill + spacers */
-    // Planespotters thumbnails are NOT all 3:2 — photographers upload anything
-    // from near-square to panoramic, and a fixed-ratio box visibly crops the
-    // airframe on every mismatch. Follow the actual photo's aspect (clamped to
-    // keep the layout sane), so ContentScale.Crop has ~nothing left to crop.
     val aspect = if (photo != null && photo.height > 0)
-        (photo.width.toFloat() / photo.height).coerceIn(1.2f, 2.0f) else 1.6f
-    // Never let the photo eat the text column (tall widgets would otherwise
-    // produce a huge box) — and when width-capped, shrink the height with it
-    // so the box keeps the photo's aspect instead of going portrait.
-    val photoHeight = minOf(topRowHeight, widgetSize.width * 0.55f / aspect)
-    val photoWidth = photoHeight * aspect
+        (photo.width.toFloat() / photo.height).coerceIn(1.4f, 1.8f) else 1.6f
+    // The photo always fills the FULL top-row height (a smaller photo is worse
+    // than a slightly cropped one); the width follows the photo's real aspect,
+    // capped only so it can't crowd out the text column on tall widget sizes.
+    val photoWidth = minOf(topRowHeight * aspect, widgetSize.width * 0.6f)
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -217,7 +213,7 @@ private fun AircraftCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = GlanceModifier.height(photoHeight).width(photoWidth)
+                modifier = GlanceModifier.fillMaxHeight().width(photoWidth)
                     .cornerRadius(16.dp)
                     .background(GlanceTheme.colors.surfaceVariant),
                 contentAlignment = Alignment.Center,
@@ -294,8 +290,8 @@ private fun AircraftCard(
 }
 
 /**
- * The middle row: airline-logo badge (when known) next to the route pill —
- * the pill no longer needs the full width, so the logo lives on its level.
+ * The middle row: the route pill stretches across the full width, with the
+ * airline-logo badge (when known) at its right end.
  */
 @Composable
 private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
@@ -305,7 +301,15 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
         modifier = GlanceModifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Weight on a plain Box, with the pill filling it — more reliable
+        // across launchers than weighting the complex pill row directly
+        if (hasRoute) {
+            Box(modifier = GlanceModifier.defaultWeight()) { RoutePill(state) }
+        } else {
+            Spacer(GlanceModifier.defaultWeight())
+        }
         airlineLogo?.let { logo ->
+            Spacer(GlanceModifier.width(6.dp))
             // Airline logos are drawn for light backgrounds — keep the badge
             // white in both themes
             Box(
@@ -320,23 +324,22 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
                     modifier = GlanceModifier.size(24.dp),
                 )
             }
-            if (hasRoute) Spacer(GlanceModifier.width(6.dp))
         }
-        if (hasRoute) RoutePill(state, GlanceModifier.defaultWeight())
     }
 }
 
 /**
- * Expressive tonal pill: origin left, the plane positioned along a dotted
- * path at its real journey progress, time-to-arrival under it, destination
- * right. Width comes from the caller (weighted next to the airline badge).
+ * Expressive tonal pill spanning its full slot: origin left, the plane
+ * positioned along a dotted path at its real journey progress,
+ * time-to-arrival under it, destination right.
  */
 @Composable
-private fun RoutePill(state: WidgetState, modifier: GlanceModifier = GlanceModifier) {
+private fun RoutePill(state: WidgetState) {
     if (state.originIata == null && state.destIata == null) return
     val context = LocalContext.current
     Row(
-        modifier = modifier
+        modifier = GlanceModifier
+            .fillMaxWidth()
             .background(GlanceTheme.colors.secondaryContainer)
             .cornerRadius(20.dp) // full pill: radius ≈ half the pill height
             .padding(horizontal = 12.dp, vertical = 5.dp),
@@ -440,11 +443,8 @@ private fun Endpoint(
 
 @Composable
 private fun ChipsRow(state: WidgetState) {
-    // RemoteViews (and therefore Glance) cannot scroll horizontally, so the
-    // row has to FIT: narrow widgets get tighter chips without the mach
-    // suffix, and the reg chip sits in a weighted box so it clips into the
-    // leftover width instead of being pushed off the right edge.
-    val compact = LocalSize.current.width < 320.dp
+    // Chips wrap their content; the LAST chip stretches to absorb the
+    // leftover width so the row always spans the full widget.
     Row(
         modifier = GlanceModifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -456,48 +456,43 @@ private fun ChipsRow(state: WidgetState) {
                 label = it,
                 bg = GlanceTheme.colors.errorContainer,
                 fg = GlanceTheme.colors.onErrorContainer,
-                compact = compact,
             )
-            Spacer(GlanceModifier.width(4.dp))
+            Spacer(GlanceModifier.width(5.dp))
         }
         Chip(
             icon = R.drawable.ic_altitude,
             label = if (state.onGround) "ground" else Units.formatAltitude(state.altitudeFt),
             bg = GlanceTheme.colors.secondaryContainer,
             fg = GlanceTheme.colors.onSecondaryContainer,
-            compact = compact,
         )
-        Spacer(GlanceModifier.width(4.dp))
+        Spacer(GlanceModifier.width(5.dp))
         // Speed and Mach combined in one pill (Glance can't do per-corner
         // radii, so a true split button isn't possible)
         Chip(
             icon = R.drawable.ic_speed,
             label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
-                (if (compact) "" else
-                    state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
+                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
             bg = GlanceTheme.colors.tertiaryContainer,
             fg = GlanceTheme.colors.onTertiaryContainer,
-            compact = compact,
         )
-        Spacer(GlanceModifier.width(4.dp))
+        Spacer(GlanceModifier.width(5.dp))
         Chip(
             icon = R.drawable.ic_distance,
             label = state.distanceKm?.let { Units.formatKm(it) } ?: "—",
             bg = GlanceTheme.colors.primaryContainer,
             fg = GlanceTheme.colors.onPrimaryContainer,
-            compact = compact,
+            modifier = if (state.registration == null) GlanceModifier.defaultWeight()
+            else GlanceModifier,
         )
         state.registration?.let { reg ->
-            Spacer(GlanceModifier.width(4.dp))
-            Box(modifier = GlanceModifier.defaultWeight()) {
-                Chip(
-                    icon = R.drawable.ic_tag,
-                    label = reg,
-                    bg = GlanceTheme.colors.surfaceVariant,
-                    fg = GlanceTheme.colors.onSurfaceVariant,
-                    compact = compact,
-                )
-            }
+            Spacer(GlanceModifier.width(5.dp))
+            Chip(
+                icon = R.drawable.ic_tag,
+                label = reg,
+                bg = GlanceTheme.colors.surfaceVariant,
+                fg = GlanceTheme.colors.onSurfaceVariant,
+                modifier = GlanceModifier.defaultWeight(),
+            )
         }
     }
 }
@@ -508,14 +503,11 @@ private fun Chip(
     label: String,
     bg: ColorProvider,
     fg: ColorProvider,
-    compact: Boolean = false,
+    modifier: GlanceModifier = GlanceModifier,
 ) {
     Row(
-        modifier = GlanceModifier.background(bg).cornerRadius(12.dp)
-            .padding(
-                horizontal = if (compact) 5.dp else 6.dp,
-                vertical = if (compact) 3.dp else 4.dp,
-            ),
+        modifier = modifier.background(bg).cornerRadius(12.dp)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -523,14 +515,10 @@ private fun Chip(
             provider = ImageProvider(icon),
             contentDescription = null,
             colorFilter = ColorFilter.tint(fg),
-            modifier = GlanceModifier.size(if (compact) 10.dp else 11.dp),
+            modifier = GlanceModifier.size(11.dp),
         )
         Spacer(GlanceModifier.width(3.dp))
-        Text(
-            text = label,
-            style = TextStyle(fontSize = if (compact) 9.sp else 10.sp, color = fg),
-            maxLines = 1,
-        )
+        Text(text = label, style = TextStyle(fontSize = 10.sp, color = fg), maxLines = 1)
     }
 }
 

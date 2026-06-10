@@ -442,12 +442,10 @@ private fun SettingsScreen(
                             ) { Text("${sec}s") }
                         }
                     }
-                    NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode) {
-                        wifiMode = it; save()
-                    }
-                    NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode) {
-                        dataMode = it; save()
-                    }
+                    NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
+                        normalLabel = "Default (${intervalSec}s)") { wifiMode = it; save() }
+                    NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
+                        normalLabel = "Default (${intervalSec}s)") { dataMode = it; save() }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -501,7 +499,8 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
     val ui = when {
         state.refreshing -> StatusUi(
             R.drawable.ic_sync, "Refreshing…",
-            "Fetching the nearest aircraft right now. Previous update: ${age()}.",
+            // Live stage from the engine: location → nearest aircraft → route/photo
+            "${state.refreshStage ?: "Starting…"} Previous update: ${age()}.",
             cs.primaryContainer, cs.onPrimaryContainer)
         state.pausedReason != null -> StatusUi(
             R.drawable.ic_battery_saver, "Paused — ${state.pausedReason}",
@@ -675,6 +674,7 @@ private fun NetModeRow(
     icon: Int,
     label: String,
     mode: NetMode,
+    normalLabel: String,
     onChange: (NetMode) -> Unit,
 ) {
     // Indented under "Default refresh" — visually a sub-option of it
@@ -696,11 +696,12 @@ private fun NetModeRow(
             )
         }
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            // Labels must stay single-line: a wrapped label makes only that
-            // segment taller and the row looks broken. "Default" refers to the
-            // rate selector directly above.
+            // The first option names the default rate, so the override
+            // relationship is self-evident. Labels use a smaller single-line
+            // style: at the default size "Default (15s)" wraps on narrow
+            // screens, making only that segment taller than the others.
             val options = listOf(
-                NetMode.NORMAL to "Default",
+                NetMode.NORMAL to normalLabel,
                 NetMode.SLOW to "10 min",
                 NetMode.OFF to "Off",
             )
@@ -709,7 +710,14 @@ private fun NetModeRow(
                     selected = mode == value,
                     onClick = { onChange(value) },
                     shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                ) { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                ) {
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

@@ -45,6 +45,12 @@ data class WidgetState(
     val updatedAt: Long = 0L,
     // Non-standard conditions surfaced as a top-right status icon on the widget
     val refreshing: Boolean = false,
+    /**
+     * What the refresh is doing right now ("Getting location…"), shown only by
+     * the in-app status card. NOT part of renderKey — the widget must not
+     * redraw three times per tick for text it doesn't display.
+     */
+    val refreshStage: String? = null,
     val pausedReason: String? = null,  // e.g. "battery saver"
     val errorCount: Int = 0,           // consecutive failed refreshes
     val lastError: String? = null,     // human-readable cause of the last failure
