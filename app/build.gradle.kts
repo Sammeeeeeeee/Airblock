@@ -13,8 +13,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.4.0"
+        versionCode = 13
+        versionName = "3.0.0"
     }
 
     buildTypes {
@@ -41,6 +41,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    lint {
+        // The androidx 1.5/1.11-alpha artifacts bundle lint checks built for a
+        // newer lint than AGP 8.7's; the NullSafeMutableLiveData detector
+        // crashes the whole lintVitalRelease run (IncompatibleClassChangeError).
+        // The app has no LiveData, so the check is pure loss. Remove when AGP
+        // is new enough to load those jars natively.
+        disable += "NullSafeMutableLiveData"
     }
 }
 
