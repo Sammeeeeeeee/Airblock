@@ -12,7 +12,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -63,7 +61,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -441,7 +438,15 @@ private fun SettingsScreen(
                                 selected = intervalSec == sec,
                                 onClick = { intervalSec = sec; save() },
                                 shape = SegmentedButtonDefaults.itemShape(i, 3),
-                            ) { Text("${sec}s") }
+                                // No check icon: it is what cramped the long
+                                // "Default (15s)" label on the rows below, and
+                                // all segmented rows must look identical
+                                icon = {},
+                            ) {
+                                Text("${sec}s",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1)
+                            }
                         }
                     }
                     NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
@@ -679,12 +684,14 @@ private fun NetModeRow(
     normalLabel: String,
     onChange: (NetMode) -> Unit,
 ) {
-    // Indented under "Default refresh" — visually a sub-option of it
-    Column(
-        Modifier.padding(start = 16.dp),
-        Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    // Header indented under "Default refresh" — visually a sub-option of it.
+    // The segmented row itself stays full-width so its segments are exactly
+    // as wide as the Default refresh row's (and the long label fits).
+    Column(Modifier, Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.padding(start = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
                 painterResource(icon), null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -697,81 +704,27 @@ private fun NetModeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        // Custom segmented pill, NOT M3 SegmentedButton: that one hard-codes
-        // equal segment widths and injects a leading checkmark on selection,
-        // which is exactly what truncated "Default (15s)" and looked odd.
-        // Here each segment's width follows its label, so the long option
-        // always shows in full while "Off" stops hogging space.
-        SegmentedToggle(
-            options = listOf(
+        // The REAL M3 SegmentedButton, so this row is pixel-identical to the
+        // "Default refresh" row above. The long label fits its equal-width
+        // segment because the check-icon slot is empty (it alone ate ~26dp)
+        // and the label style is labelMedium on both rows.
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            val options = listOf(
                 NetMode.NORMAL to normalLabel,
                 NetMode.SLOW to "10 min",
                 NetMode.OFF to "Off",
-            ),
-            selected = mode,
-            onChange = onChange,
-        )
-    }
-}
-
-/**
- * Visual clone of the M3 SegmentedButton row (outline, hairline dividers,
- * tonal selected segment with a check) — but with segment widths proportional
- * to label length, which the real one can't do (it hard-codes equal weights
- * and that is what kept truncating "Default (15s)").
- */
-@Composable
-private fun SegmentedToggle(
-    options: List<Pair<NetMode, String>>,
-    selected: NetMode,
-    onChange: (NetMode) -> Unit,
-) {
-    val shape = RoundedCornerShape(50)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(40.dp)
-            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-            .clip(shape),
-    ) {
-        options.forEachIndexed { i, (value, text) ->
-            val isSelected = value == selected
-            Box(
-                modifier = Modifier
-                    .weight(text.length.coerceAtLeast(4).toFloat())
-                    .fillMaxHeight()
-                    .background(
-                        if (isSelected) MaterialTheme.colorScheme.secondaryContainer
-                        else Color.Transparent
-                    )
-                    .clickable { onChange(value) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isSelected) {
-                        Icon(
-                            Icons.Filled.Check, null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                    }
-                    Text(
-                        text,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
-                        else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
+            )
+            options.forEachIndexed { i, (value, text) ->
+                SegmentedButton(
+                    selected = mode == value,
+                    onClick = { onChange(value) },
+                    shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                    icon = {},
+                ) {
+                    Text(text,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1)
                 }
-            }
-            if (i < options.lastIndex) {
-                Box(
-                    Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.outline),
-                )
             }
         }
     }

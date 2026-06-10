@@ -213,20 +213,28 @@ private fun AircraftCard(
             modifier = GlanceModifier.fillMaxWidth().defaultWeight(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // cornerRadius clips the VIEW — a Fit-letterboxed bitmap sits
+            // inside the view, so its corners came out square. Bake the
+            // rounding into the bitmap's pixels instead.
+            val roundedPhoto = remember(state.photoPath, topRowHeight.value) {
+                photo?.let {
+                    roundCorners(it, it.height * 16f / topRowHeight.value.coerceAtLeast(1f))
+                }
+            }
             // Background only behind the placeholder: with Fit, any unused
             // sliver of the box must stay invisible, not show as a gray band
             val photoBox = GlanceModifier.fillMaxHeight().width(photoWidth).cornerRadius(16.dp)
             Box(
-                modifier = if (photo == null)
+                modifier = if (roundedPhoto == null)
                     photoBox.background(GlanceTheme.colors.surfaceVariant) else photoBox,
                 contentAlignment = Alignment.Center,
             ) {
-                if (photo != null) {
+                if (roundedPhoto != null) {
                     Image(
-                        provider = ImageProvider(photo),
+                        provider = ImageProvider(roundedPhoto),
                         contentDescription = state.typeName,
                         contentScale = ContentScale.Fit,
-                        modifier = GlanceModifier.fillMaxSize().cornerRadius(16.dp),
+                        modifier = GlanceModifier.fillMaxSize(),
                     )
                 } else {
                     Image(
@@ -386,6 +394,23 @@ private fun RoutePill(state: WidgetState) {
         Endpoint(state.destIata, state.destFlag, state.destCity,
             horizontal = Alignment.End)
     }
+}
+
+/**
+ * Rounds the bitmap's own corners. The radius is scaled so it visually
+ * matches 16dp at the size the photo is displayed.
+ */
+private fun roundCorners(src: Bitmap, radius: Float): Bitmap {
+    val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(out)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    canvas.drawRoundRect(
+        android.graphics.RectF(0f, 0f, src.width.toFloat(), src.height.toFloat()),
+        radius, radius, paint,
+    )
+    paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+    canvas.drawBitmap(src, 0f, 0f, paint)
+    return out
 }
 
 /**
