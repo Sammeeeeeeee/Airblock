@@ -199,11 +199,12 @@ private fun AircraftCard(
     val hasRouteRow = hasRoute || airlineLogo != null
     val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
         24.dp /* chips */ - (if (hasRouteRow) 50.dp else 6.dp) /* pill + spacers */
+    // The photo always fills the FULL top-row height, and the box width tracks
+    // the photo's true aspect ratio — when they match, ContentScale.Crop has
+    // nothing to crop, so the whole airframe is visible. The clamp + width cap
+    // only guard against extreme panoramas eating the text column.
     val aspect = if (photo != null && photo.height > 0)
-        (photo.width.toFloat() / photo.height).coerceIn(1.4f, 1.8f) else 1.6f
-    // The photo always fills the FULL top-row height (a smaller photo is worse
-    // than a slightly cropped one); the width follows the photo's real aspect,
-    // capped only so it can't crowd out the text column on tall widget sizes.
+        (photo.width.toFloat() / photo.height).coerceIn(1.2f, 2.1f) else 1.6f
     val photoWidth = minOf(topRowHeight * aspect, widgetSize.width * 0.6f)
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
@@ -441,85 +442,106 @@ private fun Endpoint(
     }
 }
 
+/** Everything needed to draw one stat pill on the canvas. */
+private data class ChipDraw(val icon: Int, val label: String, val bg: Int, val fg: Int)
+
+/**
+ * The stat pills, rendered as one measured bitmap. Glance rows cannot
+ * shrink-to-fit (overflowing chips just get CUT OFF at the widget edge), so
+ * the pills are drawn on canvas instead: they always span the full row —
+ * leftover space goes into the gaps — and when space is short everything
+ * scales down together by exactly the factor needed, never clipping.
+ */
 @Composable
 private fun ChipsRow(state: WidgetState) {
-    // Chips wrap their content; the LAST chip stretches to absorb the
-    // leftover width so the row always spans the full widget.
-    Row(
-        modifier = GlanceModifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val context = LocalContext.current
+    // Row width = widget width minus the card's 10dp padding per side
+    val rowWidthDp = LocalSize.current.width.value - 20f
+    fun argb(c: ColorProvider) = c.getColor(context).toArgb()
+    val chips = buildList {
         // Emergency squawk leads the row in error colors
         state.squawkAlert?.let {
-            Chip(
-                icon = R.drawable.ic_warning,
-                label = it,
-                bg = GlanceTheme.colors.errorContainer,
-                fg = GlanceTheme.colors.onErrorContainer,
-            )
-            Spacer(GlanceModifier.width(5.dp))
+            add(ChipDraw(R.drawable.ic_warning, it,
+                argb(GlanceTheme.colors.errorContainer),
+                argb(GlanceTheme.colors.onErrorContainer)))
         }
-        Chip(
-            icon = R.drawable.ic_altitude,
-            label = if (state.onGround) "ground" else Units.formatAltitude(state.altitudeFt),
-            bg = GlanceTheme.colors.secondaryContainer,
-            fg = GlanceTheme.colors.onSecondaryContainer,
-        )
-        Spacer(GlanceModifier.width(5.dp))
-        // Speed and Mach combined in one pill (Glance can't do per-corner
-        // radii, so a true split button isn't possible)
-        Chip(
-            icon = R.drawable.ic_speed,
-            label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
+        add(ChipDraw(R.drawable.ic_altitude,
+            if (state.onGround) "ground" else Units.formatAltitude(state.altitudeFt),
+            argb(GlanceTheme.colors.secondaryContainer),
+            argb(GlanceTheme.colors.onSecondaryContainer)))
+        // Speed and Mach combined in one pill
+        add(ChipDraw(R.drawable.ic_speed,
+            (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
                 (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
-            bg = GlanceTheme.colors.tertiaryContainer,
-            fg = GlanceTheme.colors.onTertiaryContainer,
-        )
-        Spacer(GlanceModifier.width(5.dp))
-        Chip(
-            icon = R.drawable.ic_distance,
-            label = state.distanceKm?.let { Units.formatKm(it) } ?: "—",
-            bg = GlanceTheme.colors.primaryContainer,
-            fg = GlanceTheme.colors.onPrimaryContainer,
-            modifier = if (state.registration == null) GlanceModifier.defaultWeight()
-            else GlanceModifier,
-        )
-        state.registration?.let { reg ->
-            Spacer(GlanceModifier.width(5.dp))
-            Chip(
-                icon = R.drawable.ic_tag,
-                label = reg,
-                bg = GlanceTheme.colors.surfaceVariant,
-                fg = GlanceTheme.colors.onSurfaceVariant,
-                modifier = GlanceModifier.defaultWeight(),
-            )
+            argb(GlanceTheme.colors.tertiaryContainer),
+            argb(GlanceTheme.colors.onTertiaryContainer)))
+        add(ChipDraw(R.drawable.ic_distance,
+            state.distanceKm?.let { Units.formatKm(it) } ?: "—",
+            argb(GlanceTheme.colors.primaryContainer),
+            argb(GlanceTheme.colors.onPrimaryContainer)))
+        state.registration?.let {
+            add(ChipDraw(R.drawable.ic_tag, it,
+                argb(GlanceTheme.colors.surfaceVariant),
+                argb(GlanceTheme.colors.onSurfaceVariant)))
         }
     }
+    val bitmap = remember(rowWidthDp, chips) { chipsBitmap(context, chips, rowWidthDp) }
+    Image(
+        provider = ImageProvider(bitmap),
+        contentDescription = chips.joinToString { it.label },
+        modifier = GlanceModifier.fillMaxWidth().height(CHIPS_HEIGHT_DP.dp),
+        contentScale = ContentScale.Fit,
+    )
 }
 
-@Composable
-private fun Chip(
-    icon: Int,
-    label: String,
-    bg: ColorProvider,
-    fg: ColorProvider,
-    modifier: GlanceModifier = GlanceModifier,
-) {
-    Row(
-        modifier = modifier.background(bg).cornerRadius(12.dp)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Image(
-            provider = ImageProvider(icon),
-            contentDescription = null,
-            colorFilter = ColorFilter.tint(fg),
-            modifier = GlanceModifier.size(11.dp),
-        )
-        Spacer(GlanceModifier.width(3.dp))
-        Text(text = label, style = TextStyle(fontSize = 10.sp, color = fg), maxLines = 1)
+private const val CHIPS_HEIGHT_DP = 24f
+
+private fun chipsBitmap(context: Context, chips: List<ChipDraw>, widthDp: Float): Bitmap {
+    // 2x the native density: crisp text after the launcher scales the image
+    val d = context.resources.displayMetrics.density * 2f
+    val w = (widthDp * d).toInt().coerceAtLeast(1)
+    val h = (CHIPS_HEIGHT_DP * d).toInt()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // Natural pill metrics (matching the old 10sp Glance chips), then one
+    // uniform shrink factor when the labels genuinely don't fit
+    fun pillWidth(c: ChipDraw, s: Float): Float {
+        paint.textSize = 10f * d * s
+        return (6f * d + 11f * d + 3f * d + 6f * d) * s + paint.measureText(c.label)
     }
+    val minGap = 5f * d
+    fun naturalWidth(s: Float) =
+        chips.map { pillWidth(it, s) }.sum() + minGap * (chips.size - 1)
+    val scale = (w / naturalWidth(1f)).coerceAtMost(1f)
+
+    paint.textSize = 10f * d * scale
+    val widths = chips.map { pillWidth(it, scale) }
+    // Full-bleed row: all leftover width widens the gaps between pills
+    val gap = if (chips.size > 1) (w - widths.sum()) / (chips.size - 1) else 0f
+    val radius = h / 2f
+    val fm = paint.fontMetrics
+    val baseline = h / 2f - (fm.ascent + fm.descent) / 2f
+    var x = 0f
+    chips.forEachIndexed { i, chip ->
+        paint.color = chip.bg
+        canvas.drawRoundRect(x, 0f, x + widths[i], h.toFloat(), radius, radius, paint)
+        var cx = x + 6f * d * scale
+        val iconSize = 11f * d * scale
+        context.getDrawable(chip.icon)?.mutate()?.let { ic ->
+            ic.setTint(chip.fg)
+            val top = (h - iconSize) / 2f
+            ic.setBounds(cx.toInt(), top.toInt(),
+                (cx + iconSize).toInt(), (top + iconSize).toInt())
+            ic.draw(canvas)
+        }
+        cx += iconSize + 3f * d * scale
+        paint.color = chip.fg
+        canvas.drawText(chip.label, cx, baseline, paint)
+        x += widths[i] + gap
+    }
+    return bmp
 }
 
 @Composable
