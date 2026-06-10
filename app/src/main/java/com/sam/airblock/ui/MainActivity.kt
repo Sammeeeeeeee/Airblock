@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -291,7 +292,12 @@ private fun SettingsScreen(
             val widgetState by WidgetStateStore.flow(context)
                 .collectAsState(initial = WidgetState())
             SectionLabel("Status")
-            StatusCard(widgetState)
+            StatusCard(widgetState, onRefresh = {
+                scope.launch {
+                    WidgetStateStore.update(context) { it.copy(refreshing = true) }
+                    UpdateService.start(context, tickNow = true)
+                }
+            })
             Spacer(Modifier.height(8.dp))
             NetworkCard(widgetState, intervalSec, wifiMode, dataMode)
             Spacer(Modifier.height(24.dp))
@@ -348,12 +354,27 @@ private fun SettingsScreen(
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    Slider(
-                        value = radiusNm,
-                        onValueChange = { radiusNm = it },
-                        onValueChangeFinished = { save() },
-                        valueRange = 5f..250f,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalIconButton(onClick = {
+                            radiusNm = (radiusNm - 5f).coerceAtLeast(5f); save()
+                        }) {
+                            Icon(painterResource(R.drawable.ic_remove), "decrease radius")
+                        }
+                        Slider(
+                            value = radiusNm,
+                            onValueChange = { radiusNm = it },
+                            onValueChangeFinished = { save() },
+                            valueRange = 5f..250f,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 8.dp),
+                        )
+                        FilledTonalIconButton(onClick = {
+                            radiusNm = (radiusNm + 5f).coerceAtMost(250f); save()
+                        }) {
+                            Icon(painterResource(R.drawable.ic_add), "increase radius")
+                        }
+                    }
                     Text(
                         "Refresh every",
                         style = MaterialTheme.typography.titleMedium,
@@ -398,7 +419,7 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun StatusCard(state: WidgetState) {
+private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
     // Tick once a second so the age readout is precise and live
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -467,11 +488,18 @@ private fun StatusCard(state: WidgetState) {
                 modifier = Modifier.size(24.dp),
             )
             Spacer(Modifier.width(14.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(ui.title, style = MaterialTheme.typography.titleMedium,
                     color = ui.content)
                 Text(ui.detail, style = MaterialTheme.typography.bodySmall,
                     color = ui.content)
+            }
+            Spacer(Modifier.width(8.dp))
+            FilledTonalIconButton(onClick = onRefresh, enabled = !state.refreshing) {
+                Icon(
+                    painterResource(R.drawable.ic_sync), "refresh now",
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

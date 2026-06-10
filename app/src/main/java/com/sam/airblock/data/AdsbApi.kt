@@ -55,6 +55,33 @@ class AdsbApi(private val client: OkHttpClient = Http.client) {
         }
     }
 
+    /**
+     * Nearest AIRBORNE aircraft from an area query — used only when the
+     * single-aircraft `closest` answer is sitting on the ground (common next
+     * to an airport: parked jets transmit too). Radius is capped to keep the
+     * payload bounded; bodies arrive gzip'd.
+     */
+    @Throws(IOException::class)
+    fun nearestAirborne(lat: Double, lon: Double, radiusNm: Int): Aircraft? {
+        val r = radiusNm.coerceAtMost(MAX_AREA_RADIUS_NM)
+        val req = Request.Builder()
+            .url("https://api.adsb.lol/v2/lat/$lat/lon/$lon/dist/$r")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("area HTTP ${resp.code}")
+            val body = resp.body?.string() ?: throw IOException("empty body")
+            return Http.json.decodeFromString<ClosestResponse>(body).ac
+                .filter { !it.onGround }
+                // No altitude + crawling speed = almost certainly on a taxiway
+                .filterNot { it.altitudeFt == null && (it.gs ?: 0.0) < 50.0 }
+                .minByOrNull { it.dst ?: Double.MAX_VALUE }
+        }
+    }
+
+    private companion object {
+        const val MAX_AREA_RADIUS_NM = 25
+    }
+
     // Route lookups run once per flight and the CDN can take ~7 s on a cold
     // callsign — give them more headroom than the per-tick closest call.
     private val routeClient by lazy {

@@ -64,7 +64,10 @@ class Ticker(private val context: Context) {
             return
         }
         try {
+            // Ground traffic is excluded: if the nearest transponder is a
+            // parked/taxiing plane, fall back to the nearest airborne one
             val ac = api.closest(fix.lat, fix.lon, settings.radiusNm)
+                ?.let { if (it.onGround) api.nearestAirborne(fix.lat, fix.lon, settings.radiusNm) else it }
             consecutiveErrors = 0
             if (ac == null) {
                 Log.d(TAG, "tick: no aircraft within ${settings.radiusNm} nm")
