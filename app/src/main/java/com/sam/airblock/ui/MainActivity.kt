@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -713,18 +714,25 @@ private fun NetModeRow(
     }
 }
 
-/** Single-choice pill row with label-proportional segment widths, no tick. */
+/**
+ * Visual clone of the M3 SegmentedButton row (outline, hairline dividers,
+ * tonal selected segment with a check) — but with segment widths proportional
+ * to label length, which the real one can't do (it hard-codes equal weights
+ * and that is what kept truncating "Default (15s)").
+ */
 @Composable
 private fun SegmentedToggle(
     options: List<Pair<NetMode, String>>,
     selected: NetMode,
     onChange: (NetMode) -> Unit,
 ) {
+    val shape = RoundedCornerShape(50)
     Row(
         Modifier
             .fillMaxWidth()
             .height(40.dp)
-            .clip(RoundedCornerShape(20.dp)),
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .clip(shape),
     ) {
         options.forEachIndexed { i, (value, text) ->
             val isSelected = value == selected
@@ -734,21 +742,37 @@ private fun SegmentedToggle(
                     .fillMaxHeight()
                     .background(
                         if (isSelected) MaterialTheme.colorScheme.secondaryContainer
-                        else MaterialTheme.colorScheme.surfaceContainerHigh
+                        else Color.Transparent
                     )
                     .clickable { onChange(value) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isSelected) {
+                        Icon(
+                            Icons.Filled.Check, null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (i < options.lastIndex) {
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.outline),
                 )
             }
-            if (i < options.lastIndex) Spacer(Modifier.width(2.dp))
         }
     }
 }
