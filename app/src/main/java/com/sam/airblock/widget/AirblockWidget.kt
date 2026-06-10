@@ -409,23 +409,55 @@ private fun roundCorners(src: Bitmap, radius: Float): Bitmap {
 }
 
 /**
- * Dotted flight path with the plane glyph drawn at the journey-progress
- * fraction (defaults to centre when unknown).
+ * M3 Expressive-style wavy flight path, mirroring LinearWavyProgressIndicator:
+ * the flown portion is a wavy stroke, the remaining track a thin flat line
+ * with a gap around the plane glyph and a stop dot at the destination end.
+ * The plane sits at the journey-progress fraction (centre when unknown).
  */
 private fun routeProgressBitmap(context: Context, color: Int, progress: Float?): Bitmap {
     val w = 480
     val h = 64
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
     val cy = h / 2f
     val planeSize = 52
+    val gap = planeSize / 2f + 10f
     val px = (progress ?: 0.5f).coerceIn(0.07f, 0.93f) * w
-    var x = 12f
-    while (x < w - 10) {
-        if (kotlin.math.abs(x - px) > planeSize / 2f + 12) canvas.drawCircle(x, cy, 5f, paint)
-        x += 30f
+    val trackColor = (color and 0x00FFFFFF) or (0x59 shl 24) // 35% alpha track
+
+    val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.STROKE
+        strokeWidth = 9f
+        strokeCap = Paint.Cap.ROUND
     }
+    // Flown portion: sine wave from the origin up to the plane
+    val wave = android.graphics.Path()
+    val amplitude = 9f
+    val wavelength = 72f
+    var x = 8f
+    var started = false
+    while (x <= px - gap) {
+        val y = cy + amplitude *
+            kotlin.math.sin(x / wavelength * 2f * Math.PI.toFloat())
+        if (!started) { wave.moveTo(x, y); started = true } else wave.lineTo(x, y)
+        x += 4f
+    }
+    if (started) canvas.drawPath(wave, wavePaint)
+
+    // Remaining portion: thin flat track from the plane to the destination,
+    // finished with the M3 stop indicator dot
+    val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = trackColor
+        style = Paint.Style.STROKE
+        strokeWidth = 9f
+        strokeCap = Paint.Cap.ROUND
+    }
+    if (px + gap < w - 8f) canvas.drawLine(px + gap, cy, w - 8f, cy, trackPaint)
+    canvas.drawCircle(w - 10f, cy, 5f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+    })
+
     context.getDrawable(R.drawable.ic_flight)?.mutate()?.let { d ->
         d.setTint(color)
         canvas.save()

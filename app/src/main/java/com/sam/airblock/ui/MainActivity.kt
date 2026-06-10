@@ -1,3 +1,7 @@
+// M3 Expressive uses spring-physics motion, shape morphing and grouped cards
+// throughout; most of those APIs are still flagged experimental in 1.5.0-alpha.
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+
 package com.sam.airblock.ui
 
 import android.Manifest
@@ -11,12 +15,24 @@ import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,7 +42,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -36,20 +51,32 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonGroup
+import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,19 +88,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.coroutineScope
-import com.sam.airblock.widget.AirblockWidgetReceiver
-import androidx.compose.material3.Switch
-import androidx.compose.ui.text.font.FontFamily
 import com.sam.airblock.R
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
@@ -83,6 +109,7 @@ import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.engine.Gates
 import com.sam.airblock.engine.UpdateService
+import com.sam.airblock.widget.AirblockWidgetReceiver
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -116,9 +143,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val dark = isSystemInDarkTheme()
             val ctx = LocalContext.current
-            MaterialTheme(
+            // MaterialExpressiveTheme = dynamic color + the expressive defaults:
+            // springy MotionScheme, emphasized type styles and the M3E shapes.
+            MaterialExpressiveTheme(
                 colorScheme = if (dark) dynamicDarkColorScheme(ctx)
-                else dynamicLightColorScheme(ctx)
+                else dynamicLightColorScheme(ctx),
             ) {
                 SettingsScreen(
                     perms = perms,
@@ -167,6 +196,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ---- Expressive grouped-list shapes -----------------------------------------
+// New Google apps render related rows as one visual unit: large outer corners,
+// small inner corners, hairline gaps. These are those shapes.
+private val GroupSingle = RoundedCornerShape(24.dp)
+private val GroupTop = RoundedCornerShape(24.dp, 24.dp, 6.dp, 6.dp)
+private val GroupMiddle = RoundedCornerShape(6.dp)
+private val GroupBottom = RoundedCornerShape(6.dp, 6.dp, 24.dp, 24.dp)
+private val GroupGap = 3.dp
+
 @Composable
 private fun SettingsScreen(
     perms: PermissionsState,
@@ -183,6 +221,7 @@ private fun SettingsScreen(
     var logEnabled by remember { mutableStateOf(false) }
     var wifiMode by remember { mutableStateOf(NetMode.NORMAL) }
     var dataMode by remember { mutableStateOf(NetMode.NORMAL) }
+    var showLog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val s = SettingsStore.read(context)
@@ -211,102 +250,113 @@ private fun SettingsScreen(
         }
     }
 
+    if (showLog) {
+        LogDialog(
+            logEnabled = logEnabled,
+            onToggle = { on ->
+                logEnabled = on
+                save()
+                if (!on) EventLog.clear(context)
+            },
+            onDismiss = { showLog = false },
+        )
+    }
+
     val scrollState = rememberScrollState()
     var setupSectionY by remember { mutableStateOf(0) }
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    // The collapsing large header is the signature M3 Expressive app frame
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        containerColor = MaterialTheme.colorScheme.surface,
+        topBar = {
+            LargeFlexibleTopAppBar(
+                title = { Text("Airblock ✈") },
+                subtitle = { Text("Nearest-plane widget") },
+                actions = {
+                    FilledTonalIconButton(
+                        onClick = { showLog = true },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_console), "Activity log")
+                    }
+                },
+                scrollBehavior = scrollBehavior,
+            )
+        },
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp),
+                .padding(innerPadding)
+                .padding(horizontal = 16.dp),
         ) {
-            var showLog by remember { mutableStateOf(false) }
-            Spacer(Modifier.height(40.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Airblock ✈",
-                        style = MaterialTheme.typography.displaySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        "Nearest-plane widget",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(onClick = { showLog = true }) {
-                    Icon(
-                        painterResource(R.drawable.ic_console), "Activity log",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-
-            if (showLog) {
-                LogDialog(
-                    logEnabled = logEnabled,
-                    onToggle = { on ->
-                        logEnabled = on
-                        save()
-                        if (!on) EventLog.clear(context)
-                    },
-                    onDismiss = { showLog = false },
-                )
-            }
+            val motion = MaterialTheme.motionScheme
+            Spacer(Modifier.height(8.dp))
 
             // ---- Setup-required banner: a new user must not have to guess
             // what to do — point straight at the permission rows below.
-            if (!perms.allGranted) {
-                Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
+            AnimatedVisibility(
+                visible = !perms.allGranted,
+                enter = fadeIn(motion.defaultEffectsSpec()) +
+                    expandVertically(motion.defaultSpatialSpec()),
+                exit = fadeOut(motion.defaultEffectsSpec()) +
+                    shrinkVertically(motion.defaultSpatialSpec()),
+            ) {
+                Column {
+                    Surface(
+                        onClick = {
                             scope.launch { scrollState.animateScrollTo(setupSectionY) }
                         },
-                ) {
-                    Row(
-                        Modifier.padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            Icons.Filled.Info, null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "Give required permissions to start",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
+                        Row(
+                            Modifier.padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Filled.Info, null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
                             )
-                            Text(
-                                "Airblock can't refresh yet — tap to finish setup.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Give required permissions to start",
+                                    style = MaterialTheme.typography.titleMediumEmphasized,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                Text(
+                                    "Airblock can't refresh yet — tap to finish setup.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward, null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward, null,
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                        )
                     }
+                    Spacer(Modifier.height(16.dp))
                 }
-                Spacer(Modifier.height(16.dp))
             }
 
             // ---- All-set banner (only while no widget is placed yet) ------
-            if (perms.allGranted && !widgetPlaced) {
-                Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
+            AnimatedVisibility(
+                visible = perms.allGranted && !widgetPlaced,
+                enter = fadeIn(motion.defaultEffectsSpec()) +
+                    expandVertically(motion.defaultSpatialSpec()),
+                exit = fadeOut(motion.defaultEffectsSpec()) +
+                    shrinkVertically(motion.defaultSpatialSpec()),
+            ) {
+                Column {
+                    Surface(
+                        onClick = {
                             val awm = context.getSystemService(AppWidgetManager::class.java)
                             if (awm.isRequestPinAppWidgetSupported) {
                                 awm.requestPinAppWidget(
@@ -315,24 +365,28 @@ private fun SettingsScreen(
                                 )
                             }
                         },
-                ) {
-                    Row(
-                        Modifier.padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(
-                            Icons.Filled.Check, null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "All set — tap to add the Airblock widget",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
+                        Row(
+                            Modifier.padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Filled.Check, null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "All set — tap to add the Airblock widget",
+                                style = MaterialTheme.typography.titleMediumEmphasized,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                     }
+                    Spacer(Modifier.height(16.dp))
                 }
-                Spacer(Modifier.height(16.dp))
             }
 
             // ---- Live status (mirrors the widget's top-right badge) -------
@@ -345,7 +399,7 @@ private fun SettingsScreen(
                     UpdateService.start(context, tickNow = true)
                 }
             })
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(GroupGap))
             NetworkCard(widgetState, intervalSec, wifiMode, dataMode)
             Spacer(Modifier.height(24.dp))
 
@@ -362,24 +416,27 @@ private fun SettingsScreen(
                 rationale = "Finds the aircraft nearest to you. Airblock only reads the " +
                     "phone's already-cached fix — no GPS battery drain.",
                 granted = perms.fine,
+                shape = GroupTop,
                 onClick = onGrantLocation,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(GroupGap))
             PermissionRow(
                 icon = Icons.Filled.Settings,
                 title = "Location all the time",
                 rationale = "Lets the widget refresh while the app is closed. In App info " +
                     "→ Permissions → Location, choose “Allow all the time”.",
                 granted = perms.background,
+                shape = GroupMiddle,
                 onClick = onGrantBackground,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(GroupGap))
             PermissionRow(
                 icon = Icons.Filled.Info,
                 title = "Usage access",
                 rationale = "Pauses refreshes whenever your home screen isn't visible — " +
                     "this is what keeps Airblock's battery use near zero.",
                 granted = perms.usage,
+                shape = GroupBottom,
                 onClick = onGrantUsage,
             )
             Spacer(Modifier.height(24.dp))
@@ -387,8 +444,8 @@ private fun SettingsScreen(
             // ---- Tuning ---------------------------------------------------
             SectionLabel("Tuning")
             Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = GroupTop,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
@@ -401,15 +458,15 @@ private fun SettingsScreen(
                         )
                         Text(
                             "${radiusNm.roundToInt()} nm",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLargeEmphasized,
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalIconButton(onClick = {
-                            radiusNm = (radiusNm - 5f).coerceAtLeast(5f); save()
-                        }) {
+                        FilledTonalIconButton(
+                            onClick = { radiusNm = (radiusNm - 5f).coerceAtLeast(5f); save() },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
                             Icon(painterResource(R.drawable.ic_remove), "decrease radius")
                         }
                         Slider(
@@ -421,34 +478,32 @@ private fun SettingsScreen(
                                 .weight(1f)
                                 .padding(horizontal = 8.dp),
                         )
-                        FilledTonalIconButton(onClick = {
-                            radiusNm = (radiusNm + 5f).coerceAtMost(250f); save()
-                        }) {
+                        FilledTonalIconButton(
+                            onClick = { radiusNm = (radiusNm + 5f).coerceAtMost(250f); save() },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
                             Icon(painterResource(R.drawable.ic_add), "increase radius")
                         }
                     }
+                }
+            }
+            Spacer(Modifier.height(GroupGap))
+            Surface(
+                shape = GroupBottom,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
                     Text(
                         "Default refresh",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        listOf(15, 30, 60).forEachIndexed { i, sec ->
-                            SegmentedButton(
-                                selected = intervalSec == sec,
-                                onClick = { intervalSec = sec; save() },
-                                shape = SegmentedButtonDefaults.itemShape(i, 3),
-                                // No check icon: it is what cramped the long
-                                // "Default (15s)" label on the rows below, and
-                                // all segmented rows must look identical
-                                icon = {},
-                            ) {
-                                Text("${sec}s",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1)
-                            }
-                        }
-                    }
+                    ConnectedToggleRow(
+                        options = listOf(15, 30, 60).map { it to "${it}s" },
+                        selected = intervalSec,
+                        onSelect = { intervalSec = it; save() },
+                    )
                     NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
                         normalLabel = "Default (${intervalSec}s)") { wifiMode = it; save() }
                     NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
@@ -460,8 +515,8 @@ private fun SettingsScreen(
             // ---- Attribution ----------------------------------------------
             SectionLabel("Data & photos")
             Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = GroupSingle,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
@@ -474,6 +529,48 @@ private fun SettingsScreen(
                 )
             }
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * The M3 Expressive connected button group — replaces SegmentedButton rows.
+ * Checked segments morph to a full pill; pressing squishes the neighbours.
+ */
+@Composable
+private fun <T> ConnectedToggleRow(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    ButtonGroup(
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        options.forEachIndexed { i, (value, label) ->
+            val interaction = remember { MutableInteractionSource() }
+            ToggleButton(
+                checked = selected == value,
+                onCheckedChange = { onSelect(value) },
+                interactionSource = interaction,
+                modifier = Modifier
+                    .weight(1f)
+                    .animateWidth(interaction),
+                shapes = when (i) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                },
+                colors = ToggleButtonDefaults.toggleButtonColors(
+                    // The group sits inside a surfaceContainerLow card — the
+                    // default surfaceContainer would blend into it
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                ),
+                // Slim padding: the "Default (15s)" label must fit a ⅓ segment
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp),
+            ) {
+                Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
         }
     }
 }
@@ -537,26 +634,63 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
             cs.secondaryContainer, cs.onSecondaryContainer)
     }
 
+    // Status flips (ok → refreshing → stale…) glide between container colors
+    // on the motion scheme's effect springs instead of snapping
+    val motion = MaterialTheme.motionScheme
+    val container by animateColorAsState(ui.container, motion.defaultEffectsSpec())
+    val content by animateColorAsState(ui.content, motion.defaultEffectsSpec())
+
     Surface(
-        shape = RoundedCornerShape(20.dp), // M3 large-increased: row-level card
-        color = ui.container,
+        shape = GroupTop,
+        color = container,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                painterResource(ui.icon), null,
-                tint = ui.content,
-                modifier = Modifier.size(24.dp),
-            )
+        Row(
+            Modifier
+                .padding(16.dp)
+                .animateContentSize(motion.defaultSpatialSpec()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // While the engine works, the icon hands over to the expressive
+            // shape-morphing loading indicator
+            AnimatedContent(
+                targetState = state.refreshing,
+                transitionSpec = {
+                    (fadeIn(motion.defaultEffectsSpec()) +
+                        scaleIn(motion.defaultSpatialSpec()))
+                        .togetherWith(fadeOut(motion.defaultEffectsSpec()) +
+                            scaleOut(motion.defaultSpatialSpec()))
+                },
+                label = "status icon",
+            ) { refreshing ->
+                if (refreshing) {
+                    LoadingIndicator(
+                        color = content,
+                        modifier = Modifier.size(32.dp),
+                    )
+                } else {
+                    Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            painterResource(ui.icon), null,
+                            tint = content,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(ui.title, style = MaterialTheme.typography.titleMedium,
-                    color = ui.content)
+                Text(ui.title, style = MaterialTheme.typography.titleMediumEmphasized,
+                    color = content)
                 Text(ui.detail, style = MaterialTheme.typography.bodySmall,
-                    color = ui.content)
+                    color = content)
             }
             Spacer(Modifier.width(8.dp))
-            FilledTonalIconButton(onClick = onRefresh, enabled = !state.refreshing) {
+            FilledIconButton(
+                onClick = onRefresh,
+                enabled = !state.refreshing,
+                shapes = IconButtonDefaults.shapes(),
+            ) {
                 Icon(
                     painterResource(R.drawable.ic_sync), "refresh now",
                     modifier = Modifier.size(20.dp),
@@ -624,8 +758,8 @@ private fun NetworkCard(
         ((now - state.updatedAt).toFloat() / intervalMs).coerceIn(0f, 1f) else null
 
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = GroupBottom,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(vertical = 14.dp)) {
@@ -635,8 +769,11 @@ private fun NetworkCard(
             }
             progress?.let {
                 Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
+                // Wavy countdown to the next refresh; the wave swells as the
+                // refresh gets closer, then flattens again
+                LinearWavyProgressIndicator(
                     progress = { it },
+                    amplitude = { p -> p },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 18.dp),
@@ -662,8 +799,7 @@ private fun StatCell(icon: Int, value: String, label: String, modifier: Modifier
         Column {
             Text(
                 value,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMediumEmphasized,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -675,7 +811,6 @@ private fun StatCell(icon: Int, value: String, label: String, modifier: Modifier
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NetModeRow(
     icon: Int,
@@ -685,7 +820,7 @@ private fun NetModeRow(
     onChange: (NetMode) -> Unit,
 ) {
     // Header indented under "Default refresh" — visually a sub-option of it.
-    // The segmented row itself stays full-width so its segments are exactly
+    // The button group itself stays full-width so its segments are exactly
     // as wide as the Default refresh row's (and the long label fits).
     Column(Modifier, Arrangement.spacedBy(8.dp)) {
         Row(
@@ -704,29 +839,15 @@ private fun NetModeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        // The REAL M3 SegmentedButton, so this row is pixel-identical to the
-        // "Default refresh" row above. The long label fits its equal-width
-        // segment because the check-icon slot is empty (it alone ate ~26dp)
-        // and the label style is labelMedium on both rows.
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            val options = listOf(
+        ConnectedToggleRow(
+            options = listOf(
                 NetMode.NORMAL to normalLabel,
                 NetMode.SLOW to "10 min",
                 NetMode.OFF to "Off",
-            )
-            options.forEachIndexed { i, (value, text) ->
-                SegmentedButton(
-                    selected = mode == value,
-                    onClick = { onChange(value) },
-                    shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                    icon = {},
-                ) {
-                    Text(text,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1)
-                }
-            }
-        }
+            ),
+            selected = mode,
+            onSelect = onChange,
+        )
     }
 }
 
@@ -749,13 +870,16 @@ private fun LogDialog(
             Column(Modifier.padding(horizontal = 16.dp)) {
                 Spacer(Modifier.height(24.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, "close",
-                            tint = MaterialTheme.colorScheme.onSurface)
+                    FilledTonalIconButton(
+                        onClick = onDismiss,
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(Icons.Filled.Close, "close")
                     }
+                    Spacer(Modifier.width(12.dp))
                     Text(
                         "Activity log",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleLargeEmphasized,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
@@ -765,7 +889,7 @@ private fun LogDialog(
                     "What the engine did and when. Turning the log off deletes all records.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
+                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
                 )
                 if (logEnabled) {
                     var events by remember { mutableStateOf(listOf<String>()) }
@@ -816,8 +940,7 @@ private fun LogDialog(
 private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.Bold,
+        style = MaterialTheme.typography.titleSmallEmphasized,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(start = 8.dp, bottom = 8.dp),
     )
@@ -829,26 +952,35 @@ private fun PermissionRow(
     title: String,
     rationale: String,
     granted: Boolean,
+    shape: Shape,
     onClick: () -> Unit,
 ) {
     // Ungranted rows are RED — a missing permission means the widget cannot
     // work at all, so it must read as "action required", not as a neutral card.
-    Surface(
-        shape = RoundedCornerShape(20.dp), // M3 large-increased: row-level card
-        color = if (granted) MaterialTheme.colorScheme.secondaryContainer
+    val motion = MaterialTheme.motionScheme
+    val containerColor by animateColorAsState(
+        if (granted) MaterialTheme.colorScheme.secondaryContainer
         else MaterialTheme.colorScheme.errorContainer,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !granted, onClick = onClick),
+        motion.defaultEffectsSpec(),
+    )
+    Surface(
+        onClick = onClick,
+        enabled = !granted,
+        shape = shape,
+        color = containerColor,
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Granted permissions wear the M3 Expressive "verified"-style
+            // scalloped badge; pending ones stay a plain alert circle
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .background(
                         if (granted) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.error,
-                        CircleShape,
+                        if (granted) MaterialShapes.Cookie9Sided.toShape()
+                        else MaterialShapes.Circle.toShape(),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -863,7 +995,7 @@ private fun PermissionRow(
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMediumEmphasized,
                     color = if (granted) MaterialTheme.colorScheme.onSecondaryContainer
                     else MaterialTheme.colorScheme.onErrorContainer,
                 )
