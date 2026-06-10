@@ -5,7 +5,14 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Manual release without a command line: Actions → Build APK → Run workflow,
+  # enter a tag like v2.3.1 — the run creates the tag AND the release with APKs.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create from this commit (e.g. v2.3.1); leave empty for a plain build"
+        required: false
+        default: ""
 
 permissions:
   contents: write      # create releases + upload assets
@@ -15,6 +22,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # The release tag this run is producing: from the pushed tag, or from the
+      # workflow_dispatch input. Empty = ordinary build, no release steps.
+      RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -70,48 +81,50 @@ jobs:
           path: app/build/reports/
           retention-days: 7
 
-      # ---- Tagged releases (push a v* tag) --------------------------------
+      # ---- Releases (v* tag push, or manual dispatch with release_tag) -----
       - name: Build release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: gradle assembleRelease
 
       - name: Rename release assets
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
-          cp app/build/outputs/apk/release/app-release.apk "airblock-${{ github.ref_name }}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "airblock-${{ github.ref_name }}-debug.apk"
+          cp app/build/outputs/apk/release/app-release.apk "airblock-${RELEASE_TAG}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "airblock-${RELEASE_TAG}-debug.apk"
 
       # Sigstore-backed build provenance: anyone can verify these APKs were
       # built by THIS workflow from THIS commit:
       #   gh attestation verify airblock-vX.Y.Z.apk --repo Sammeeeeeeee/Airblock
       - name: Attest build provenance (Sigstore)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            airblock-${{ github.ref_name }}.apk
-            airblock-${{ github.ref_name }}-debug.apk
+            airblock-${{ env.RELEASE_TAG }}.apk
+            airblock-${{ env.RELEASE_TAG }}-debug.apk
 
       # Idempotent: a release manually created in the GitHub UI (which is what
       # pushes the tag) must get the APKs attached, not make this step fail.
       # --clobber also lets a re-run replace previously uploaded assets.
+      # On dispatch the tag doesn't exist yet — gh creates it at this commit.
       - name: Create GitHub release (or attach APKs to an existing one)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists — uploading APKs to it"
-            gh release upload "${{ github.ref_name }}" \
-              "airblock-${{ github.ref_name }}.apk" \
-              "airblock-${{ github.ref_name }}-debug.apk" \
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists — uploading APKs to it"
+            gh release upload "$RELEASE_TAG" \
+              "airblock-${RELEASE_TAG}.apk" \
+              "airblock-${RELEASE_TAG}-debug.apk" \
               --clobber \
               --repo "${{ github.repository }}"
           else
-            gh release create "${{ github.ref_name }}" \
-              "airblock-${{ github.ref_name }}.apk" \
-              "airblock-${{ github.ref_name }}-debug.apk" \
-              --title "Airblock ${{ github.ref_name }}" \
+            gh release create "$RELEASE_TAG" \
+              "airblock-${RELEASE_TAG}.apk" \
+              "airblock-${RELEASE_TAG}-debug.apk" \
+              --title "Airblock $RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
               --generate-notes \
               --repo "${{ github.repository }}"
           fi
