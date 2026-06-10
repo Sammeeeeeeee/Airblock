@@ -42,8 +42,8 @@ class Ticker(private val context: Context) {
         // The badge spinner must reflect EVERY refresh (automatic ones too),
         // not just manual taps — flip it on now; every exit path below
         // publishes a state with refreshing=false, so it can't get stuck.
-        val (p0, n0) = WidgetStateStore.update(context) { it.copy(refreshing = true) }
-        if (p0.renderKey() != n0.renderKey()) AirblockWidget().updateAll(context)
+        // The stage text feeds the in-app status card only.
+        setStage("Getting location…")
 
         val settings = SettingsStore.read(context)
         val log = settings.logEnabled
@@ -72,6 +72,7 @@ class Ticker(private val context: Context) {
             return
         }
         try {
+            setStage("Finding the nearest aircraft…")
             // Ground traffic is excluded: if the nearest transponder is a
             // parked/taxiing plane, fall back to the nearest airborne one
             val ac = api.closest(fix.lat, fix.lon, settings.radiusNm)
@@ -86,6 +87,7 @@ class Ticker(private val context: Context) {
                 return
             }
 
+            setStage("Loading route, photo & logo…")
             val callsign = ac.callsign
             val route: RouteResult? = when {
                 callsign == null -> null
@@ -183,7 +185,7 @@ class Ticker(private val context: Context) {
             // Keep showing last good data, but surface the failure icon
             val (prev, next) = WidgetStateStore.update(context) {
                 it.copy(errorCount = consecutiveErrors, refreshing = false,
-                    pausedReason = null,
+                    refreshStage = null, pausedReason = null,
                     lastError = e.message ?: e.javaClass.simpleName)
             }
             if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
@@ -223,6 +225,19 @@ class Ticker(private val context: Context) {
         desc.split(" ").joinToString(" ") { w ->
             if (w.any { it.isDigit() }) w else w.lowercase().replaceFirstChar { it.uppercase() }
         }
+
+    /**
+     * Mark the refresh in progress and record its current stage. Only the
+     * first call per tick redraws the widget (spinner on); later stage changes
+     * don't alter renderKey, so the app's status card sees them via the
+     * DataStore flow with zero extra widget churn.
+     */
+    private suspend fun setStage(stage: String) {
+        val (prev, next) = WidgetStateStore.update(context) {
+            it.copy(refreshing = true, refreshStage = stage)
+        }
+        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
+    }
 
     private suspend fun publish(state: WidgetState) {
         // Atomic swap — concurrent writers (worker, tap) can't interleave
