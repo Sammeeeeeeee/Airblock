@@ -37,6 +37,12 @@ class Ticker(private val context: Context) {
         private set
 
     suspend fun tick() {
+        // The badge spinner must reflect EVERY refresh (automatic ones too),
+        // not just manual taps — flip it on now; every exit path below
+        // publishes a state with refreshing=false, so it can't get stuck.
+        val (p0, n0) = WidgetStateStore.update(context) { it.copy(refreshing = true) }
+        if (p0.renderKey() != n0.renderKey()) AirblockWidget().updateAll(context)
+
         val settings = SettingsStore.read(context)
         val log = settings.logEnabled
 
