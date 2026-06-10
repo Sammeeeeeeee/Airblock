@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -61,13 +62,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -695,30 +696,59 @@ private fun NetModeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            // The first option names the default rate, so the override
-            // relationship is self-evident. Labels use a smaller single-line
-            // style: at the default size "Default (15s)" wraps on narrow
-            // screens, making only that segment taller than the others.
-            val options = listOf(
+        // Custom segmented pill, NOT M3 SegmentedButton: that one hard-codes
+        // equal segment widths and injects a leading checkmark on selection,
+        // which is exactly what truncated "Default (15s)" and looked odd.
+        // Here each segment's width follows its label, so the long option
+        // always shows in full while "Off" stops hogging space.
+        SegmentedToggle(
+            options = listOf(
                 NetMode.NORMAL to normalLabel,
                 NetMode.SLOW to "10 min",
                 NetMode.OFF to "Off",
-            )
-            options.forEachIndexed { i, (value, text) ->
-                SegmentedButton(
-                    selected = mode == value,
-                    onClick = { onChange(value) },
-                    shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                ) {
-                    Text(
-                        text,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+            ),
+            selected = mode,
+            onChange = onChange,
+        )
+    }
+}
+
+/** Single-choice pill row with label-proportional segment widths, no tick. */
+@Composable
+private fun SegmentedToggle(
+    options: List<Pair<NetMode, String>>,
+    selected: NetMode,
+    onChange: (NetMode) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(20.dp)),
+    ) {
+        options.forEachIndexed { i, (value, text) ->
+            val isSelected = value == selected
+            Box(
+                modifier = Modifier
+                    .weight(text.length.coerceAtLeast(4).toFloat())
+                    .fillMaxHeight()
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHigh
                     )
-                }
+                    .clickable { onChange(value) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
             }
+            if (i < options.lastIndex) Spacer(Modifier.width(2.dp))
         }
     }
 }

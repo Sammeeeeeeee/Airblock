@@ -34,7 +34,6 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -197,14 +196,16 @@ private fun AircraftCard(
     val widgetSize = LocalSize.current
     val hasRoute = state.originIata != null || state.destIata != null
     val hasRouteRow = hasRoute || airlineLogo != null
+    // Slightly conservative middle-row budget: the photo box must never be
+    // TALLER than the real top row or the launcher clips it back into a crop.
     val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
-        24.dp /* chips */ - (if (hasRouteRow) 50.dp else 6.dp) /* pill + spacers */
-    // The photo always fills the FULL top-row height, and the box width tracks
-    // the photo's true aspect ratio — when they match, ContentScale.Crop has
-    // nothing to crop, so the whole airframe is visible. The clamp + width cap
-    // only guard against extreme panoramas eating the text column.
+        24.dp /* chips */ - (if (hasRouteRow) 58.dp else 12.dp) /* pill + spacers */
+    // The photo dictates the box: BOTH dimensions come from the same number,
+    // so box aspect == photo aspect exactly and the full picture shows.
+    // (Previously height came from fillMaxHeight while width came from this
+    // estimate — any mismatch between the two turned straight into cropping.)
     val aspect = if (photo != null && photo.height > 0)
-        (photo.width.toFloat() / photo.height).coerceIn(1.2f, 2.1f) else 1.6f
+        (photo.width.toFloat() / photo.height).coerceIn(1.0f, 2.3f) else 1.6f
     val photoWidth = minOf(topRowHeight * aspect, widgetSize.width * 0.6f)
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
@@ -214,7 +215,7 @@ private fun AircraftCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = GlanceModifier.fillMaxHeight().width(photoWidth)
+                modifier = GlanceModifier.height(topRowHeight).width(photoWidth)
                     .cornerRadius(16.dp)
                     .background(GlanceTheme.colors.surfaceVariant),
                 contentAlignment = Alignment.Center,
@@ -223,7 +224,10 @@ private fun AircraftCard(
                     Image(
                         provider = ImageProvider(photo),
                         contentDescription = state.typeName,
-                        contentScale = ContentScale.Crop,
+                        // Fit, not Crop: the box already matches the photo's
+                        // aspect, and on the rare clamp the photo letterboxes
+                        // instead of losing the airframe's nose or tail
+                        contentScale = ContentScale.Fit,
                         modifier = GlanceModifier.fillMaxSize().cornerRadius(16.dp),
                     )
                 } else {
@@ -291,8 +295,8 @@ private fun AircraftCard(
 }
 
 /**
- * The middle row: the route pill stretches across the full width, with the
- * airline-logo badge (when known) at its right end.
+ * The middle row: the route pill takes all width up to the airline-logo
+ * badge, which sits NEXT TO it on the right as its own element.
  */
 @Composable
 private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
@@ -311,28 +315,32 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
         }
         airlineLogo?.let { logo ->
             Spacer(GlanceModifier.width(6.dp))
-            // Airline logos are drawn for light backgrounds — keep the badge
-            // white in both themes
-            Box(
-                modifier = GlanceModifier
-                    .background(ColorProvider(androidx.compose.ui.graphics.Color.White))
-                    .cornerRadius(14.dp)
-                    .padding(5.dp),
-            ) {
-                Image(
-                    provider = ImageProvider(logo),
-                    contentDescription = "airline",
-                    modifier = GlanceModifier.size(24.dp),
-                )
-            }
+            AirlineLogoBadge(logo)
         }
     }
 }
 
+/** White rounded badge — airline logos are drawn for light backgrounds. */
+@Composable
+private fun AirlineLogoBadge(logo: Bitmap) {
+    Box(
+        modifier = GlanceModifier
+            .background(ColorProvider(androidx.compose.ui.graphics.Color.White))
+            .cornerRadius(14.dp)
+            .padding(5.dp),
+    ) {
+        Image(
+            provider = ImageProvider(logo),
+            contentDescription = "airline",
+            modifier = GlanceModifier.size(24.dp),
+        )
+    }
+}
+
 /**
- * Expressive tonal pill spanning its full slot: origin left, the plane
- * positioned along a dotted path at its real journey progress,
- * time-to-arrival under it, destination right.
+ * Expressive tonal pill spanning its slot: origin left, the plane positioned
+ * along a dotted path at its real journey progress, time-to-arrival under it,
+ * destination right.
  */
 @Composable
 private fun RoutePill(state: WidgetState) {
@@ -490,7 +498,10 @@ private fun ChipsRow(state: WidgetState) {
         provider = ImageProvider(bitmap),
         contentDescription = chips.joinToString { it.label },
         modifier = GlanceModifier.fillMaxWidth().height(CHIPS_HEIGHT_DP.dp),
-        contentScale = ContentScale.Fit,
+        // FillBounds, not Fit: LocalSize is the launcher's estimate and can be
+        // a few dp under the real cell width — Fit then leaves dead bands at
+        // the sides, FillBounds stretches the row to the true edges.
+        contentScale = ContentScale.FillBounds,
     )
 }
 
@@ -505,13 +516,14 @@ private fun chipsBitmap(context: Context, chips: List<ChipDraw>, widthDp: Float)
     val canvas = Canvas(bmp)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // Natural pill metrics (matching the old 10sp Glance chips), then one
-    // uniform shrink factor when the labels genuinely don't fit
+    // Natural pill metrics (matching the old 10sp Glance chips). Gaps give
+    // way FIRST (5dp → 3dp); the text only shrinks when even tight gaps
+    // can't fit the labels — keeping it as close to full size as possible.
     fun pillWidth(c: ChipDraw, s: Float): Float {
         paint.textSize = 10f * d * s
         return (6f * d + 11f * d + 3f * d + 6f * d) * s + paint.measureText(c.label)
     }
-    val minGap = 5f * d
+    val minGap = 3f * d
     fun naturalWidth(s: Float) =
         chips.map { pillWidth(it, s) }.sum() + minGap * (chips.size - 1)
     val scale = (w / naturalWidth(1f)).coerceAtMost(1f)
