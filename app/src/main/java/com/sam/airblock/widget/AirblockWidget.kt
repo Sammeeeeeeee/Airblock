@@ -423,15 +423,11 @@ private fun ChipsRow(state: WidgetState) {
         )
         state.registration?.let { reg ->
             Spacer(GlanceModifier.width(5.dp))
-            // Compact: the reg is the least important value — it cedes
-            // width to the speed pill
             Chip(
                 icon = R.drawable.ic_tag,
                 label = reg,
                 bg = GlanceTheme.colors.surfaceVariant,
                 fg = GlanceTheme.colors.onSurfaceVariant,
-                modifier = GlanceModifier.defaultWeight(),
-                compact = true,
             )
         }
     }
@@ -444,11 +440,10 @@ private fun Chip(
     bg: ColorProvider,
     fg: ColorProvider,
     modifier: GlanceModifier = GlanceModifier,
-    compact: Boolean = false,
 ) {
     Row(
         modifier = modifier.background(bg).cornerRadius(12.dp)
-            .padding(horizontal = if (compact) 5.dp else 6.dp, vertical = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -456,14 +451,10 @@ private fun Chip(
             provider = ImageProvider(icon),
             contentDescription = null,
             colorFilter = ColorFilter.tint(fg),
-            modifier = GlanceModifier.size(if (compact) 9.dp else 11.dp),
+            modifier = GlanceModifier.size(11.dp),
         )
-        Spacer(GlanceModifier.width(if (compact) 2.dp else 3.dp))
-        Text(
-            text = label,
-            style = TextStyle(fontSize = if (compact) 9.sp else 10.sp, color = fg),
-            maxLines = 1,
-        )
+        Spacer(GlanceModifier.width(3.dp))
+        Text(text = label, style = TextStyle(fontSize = 10.sp, color = fg), maxLines = 1)
     }
 }
 

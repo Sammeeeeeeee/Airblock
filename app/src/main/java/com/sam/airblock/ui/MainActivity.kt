@@ -94,6 +94,7 @@ data class PermissionsState(
 class MainActivity : ComponentActivity() {
 
     private var perms by mutableStateOf(PermissionsState())
+    private var widgetPlaced by mutableStateOf(false)
 
     private val requestPerms =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -117,6 +118,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 SettingsScreen(
                     perms = perms,
+                    widgetPlaced = widgetPlaced,
                     onGrantLocation = {
                         requestPerms.launch(
                             arrayOf(
@@ -155,12 +157,16 @@ class MainActivity : ComponentActivity() {
             background = granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
             usage = Gates(this).hasUsageAccess(),
         )
+        widgetPlaced = getSystemService(AppWidgetManager::class.java)
+            .getAppWidgetIds(ComponentName(this, AirblockWidgetReceiver::class.java))
+            .isNotEmpty()
     }
 }
 
 @Composable
 private fun SettingsScreen(
     perms: PermissionsState,
+    widgetPlaced: Boolean,
     onGrantLocation: () -> Unit,
     onGrantBackground: () -> Unit,
     onGrantUsage: () -> Unit,
@@ -245,8 +251,8 @@ private fun SettingsScreen(
                 )
             }
 
-            // ---- All-set banner ------------------------------------------
-            if (perms.allGranted) {
+            // ---- All-set banner (only while no widget is placed yet) ------
+            if (perms.allGranted && !widgetPlaced) {
                 Surface(
                     shape = RoundedCornerShape(28.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -286,6 +292,8 @@ private fun SettingsScreen(
                 .collectAsState(initial = WidgetState())
             SectionLabel("Status")
             StatusCard(widgetState)
+            Spacer(Modifier.height(8.dp))
+            NetworkCard(widgetState, intervalSec, wifiMode, dataMode)
             Spacer(Modifier.height(24.dp))
 
             // ---- Permissions ---------------------------------------------
@@ -347,14 +355,8 @@ private fun SettingsScreen(
                         valueRange = 5f..250f,
                     )
                     Text(
-                        "Normal refresh rate",
+                        "Refresh every",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "Used by default — the per-network rules below can " +
-                            "slow it to 10 min or turn refreshing off.",
-                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -366,18 +368,10 @@ private fun SettingsScreen(
                             ) { Text("${sec}s") }
                         }
                     }
-                    Text(
-                        "Only while the widget is on screen — never in the background.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    NetModeRow("On Wi-Fi", wifiMode) { wifiMode = it; save() }
-                    NetModeRow("On mobile data", dataMode) { dataMode = it; save() }
-                    Text(
-                        "Refreshing always pauses while the system Data Saver is on.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
+                        normalLabel = "${intervalSec}s") { wifiMode = it; save() }
+                    NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
+                        normalLabel = "${intervalSec}s") { dataMode = it; save() }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -423,7 +417,6 @@ private fun StatusCard(state: WidgetState) {
     val staleDeadline = if (state.staleAfterMs > 0) state.staleAfterMs
     else state.updatedAt + 120_000
     val isStaleNow = state.updatedAt > 0 && now > staleDeadline
-    val schedule = state.modeLabel?.let { " · $it" } ?: ""
 
     data class StatusUi(val icon: Int, val title: String, val detail: String,
         val container: Color, val content: Color)
@@ -458,7 +451,7 @@ private fun StatusCard(state: WidgetState) {
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
         else -> StatusUi(
             R.drawable.ic_flight, "Up to date",
-            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · ") + schedule,
+            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
             cs.secondaryContainer, cs.onSecondaryContainer)
     }
 
@@ -484,17 +477,129 @@ private fun StatusCard(state: WidgetState) {
     }
 }
 
+/**
+ * Live "what is the engine doing right now" stat pair: current network and
+ * countdown to the next expected refresh.
+ */
+@Composable
+private fun NetworkCard(
+    state: WidgetState,
+    intervalSec: Int,
+    wifiMode: NetMode,
+    dataMode: NetMode,
+) {
+    val context = LocalContext.current
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    var transport by remember { mutableStateOf<String?>(null) }
+    var dataSaver by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                val gates = Gates(context)
+                transport = gates.networkTransport()
+                dataSaver = gates.dataSaverOn()
+            }
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
+    val mode = when {
+        transport == null || dataSaver -> NetMode.OFF
+        transport == "wifi" -> wifiMode
+        transport == "cell" -> dataMode
+        else -> maxOf(wifiMode, dataMode)
+    }
+    val netLabel = when (transport) {
+        "wifi" -> "Wi-Fi"
+        "cell" -> "Mobile data"
+        null -> "Offline"
+        else -> "Other"
+    }
+    val netIcon = if (transport == "cell") R.drawable.ic_cell else R.drawable.ic_wifi
+    val intervalMs = when (mode) {
+        NetMode.SLOW -> 10L * 60 * 1000
+        NetMode.OFF -> null
+        NetMode.NORMAL -> intervalSec * 1000L
+    }
+    val nextLabel = when {
+        dataSaver -> "Data Saver"
+        intervalMs == null -> "Off"
+        state.updatedAt == 0L -> "—"
+        else -> {
+            val secs = ((state.updatedAt + intervalMs - now) / 1000).coerceAtLeast(0)
+            if (secs >= 90) "~${(secs + 30) / 60} min" else "~${secs}s"
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(vertical = 14.dp)) {
+            StatCell(netIcon, netLabel, "Network", Modifier.weight(1f))
+            StatCell(R.drawable.ic_clock, nextLabel, "Next refresh", Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun StatCell(icon: Int, value: String, label: String, modifier: Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            painterResource(icon), null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NetModeRow(label: String, mode: NetMode, onChange: (NetMode) -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun NetModeRow(
+    icon: Int,
+    label: String,
+    mode: NetMode,
+    normalLabel: String,
+    onChange: (NetMode) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            painterResource(icon), null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        // The first option shows the ACTUAL normal rate, so the override
+        // relationship is self-evident without explainer text
         val options = listOf(
-            NetMode.NORMAL to "Normal",
+            NetMode.NORMAL to normalLabel,
             NetMode.SLOW to "10 min",
             NetMode.OFF to "Off",
         )
