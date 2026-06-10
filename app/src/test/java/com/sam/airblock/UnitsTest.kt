@@ -56,7 +56,7 @@ class UnitsTest {
     @Test fun specialTypeClassifier() {
         assertEquals("Military", SpecialType.classify("A3", 1L))   // dbFlags bit 1
         assertEquals("Military", SpecialType.classify(null, 3L))
-        assertEquals("Helicopter", SpecialType.classify("A7", 0L))
+        assertNull(SpecialType.classify("A7", 0L))                  // civilian helicopter
         assertEquals("Drone", SpecialType.classify("B6", null))
         assertNull(SpecialType.classify("A3", 0L))                  // ordinary airliner
         assertNull(SpecialType.classify(null, null))
