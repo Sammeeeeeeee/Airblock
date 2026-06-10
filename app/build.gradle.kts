@@ -45,7 +45,7 @@ android {
 }
 
 dependencies {
-    // Widget UI ??? compiles to RemoteViews, no runtime overhead
+    // Widget UI - compiles to RemoteViews, no runtime overhead
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
 
@@ -56,7 +56,7 @@ dependencies {
     // InvalidFragmentVersionForActivityResult lint check on release builds
     implementation("androidx.fragment:fragment:1.8.5")
 
-    // Data + networking ??? deliberately minimal
+    // Data + networking - deliberately minimal
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
