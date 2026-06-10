@@ -95,8 +95,13 @@ jobs:
       # Sigstore-backed build provenance: anyone can verify these APKs were
       # built by THIS workflow from THIS commit:
       #   gh attestation verify airblock-vX.Y.Z.apk --repo Sammeeeeeeee/Airblock
+      # Best-effort: GitHub's attestation API intermittently 401s ("Failed to
+      # persist attestation: Requires authentication") and that must never
+      # block publishing the release APKs themselves (v3.0.0 hit this twice).
+      # A release without an attestation simply can't be gh-verified.
       - name: Attest build provenance (Sigstore)
         if: env.RELEASE_TAG != ''
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
