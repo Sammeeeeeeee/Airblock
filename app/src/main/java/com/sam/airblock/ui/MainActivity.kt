@@ -62,9 +62,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -209,11 +212,13 @@ private fun SettingsScreen(
         }
     }
 
+    val scrollState = rememberScrollState()
+    var setupSectionY by remember { mutableStateOf(0) }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp),
         ) {
             var showLog by remember { mutableStateOf(false) }
@@ -251,6 +256,48 @@ private fun SettingsScreen(
                     },
                     onDismiss = { showLog = false },
                 )
+            }
+
+            // ---- Setup-required banner: a new user must not have to guess
+            // what to do — point straight at the permission rows below.
+            if (!perms.allGranted) {
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            scope.launch { scrollState.animateScrollTo(setupSectionY) }
+                        },
+                ) {
+                    Row(
+                        Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Info, null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Give required permissions to start",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                "Airblock can't refresh yet — tap to finish setup.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward, null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
 
             // ---- All-set banner (only while no widget is placed yet) ------
@@ -304,7 +351,12 @@ private fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
 
             // ---- Permissions ---------------------------------------------
-            SectionLabel("Setup")
+            SectionLabel(
+                "Setup",
+                Modifier.onGloballyPositioned {
+                    setupSectionY = it.positionInParent().y.roundToInt()
+                },
+            )
             PermissionRow(
                 icon = Icons.Filled.LocationOn,
                 title = "Precise location",
@@ -390,10 +442,12 @@ private fun SettingsScreen(
                             ) { Text("${sec}s") }
                         }
                     }
-                    NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
-                        normalLabel = "Default (${intervalSec}s)") { wifiMode = it; save() }
-                    NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
-                        normalLabel = "Default (${intervalSec}s)") { dataMode = it; save() }
+                    NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode) {
+                        wifiMode = it; save()
+                    }
+                    NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode) {
+                        dataMode = it; save()
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -408,7 +462,7 @@ private fun SettingsScreen(
                 Text(
                     "Live aircraft data from adsb.lol, the community ADS-B network. " +
                         "Aircraft photos via the Planespotters.net API — © their " +
-                        "respective photographers.",
+                        "respective photographers. Airline logos via Kiwi.com.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(20.dp),
@@ -621,7 +675,6 @@ private fun NetModeRow(
     icon: Int,
     label: String,
     mode: NetMode,
-    normalLabel: String,
     onChange: (NetMode) -> Unit,
 ) {
     // Indented under "Default refresh" — visually a sub-option of it
@@ -643,10 +696,11 @@ private fun NetModeRow(
             )
         }
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            // The first option names the default rate, so the override
-            // relationship is self-evident without explainer text
+            // Labels must stay single-line: a wrapped label makes only that
+            // segment taller and the row looks broken. "Default" refers to the
+            // rate selector directly above.
             val options = listOf(
-                NetMode.NORMAL to normalLabel,
+                NetMode.NORMAL to "Default",
                 NetMode.SLOW to "10 min",
                 NetMode.OFF to "Off",
             )
@@ -655,7 +709,7 @@ private fun NetModeRow(
                     selected = mode == value,
                     onClick = { onChange(value) },
                     shape = SegmentedButtonDefaults.itemShape(i, options.size),
-                ) { Text(text) }
+                ) { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
     }
@@ -744,13 +798,13 @@ private fun LogDialog(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+        modifier = modifier.padding(start = 8.dp, bottom = 8.dp),
     )
 }
 
@@ -762,10 +816,12 @@ private fun PermissionRow(
     granted: Boolean,
     onClick: () -> Unit,
 ) {
+    // Ungranted rows are RED — a missing permission means the widget cannot
+    // work at all, so it must read as "action required", not as a neutral card.
     Surface(
         shape = RoundedCornerShape(20.dp), // M3 large-increased: row-level card
         color = if (granted) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        else MaterialTheme.colorScheme.errorContainer,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = !granted, onClick = onClick),
@@ -776,7 +832,7 @@ private fun PermissionRow(
                     .size(40.dp)
                     .background(
                         if (granted) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surface,
+                        else MaterialTheme.colorScheme.error,
                         CircleShape,
                     ),
                 contentAlignment = Alignment.Center,
@@ -784,7 +840,7 @@ private fun PermissionRow(
                 Icon(
                     icon, null,
                     tint = if (granted) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    else MaterialTheme.colorScheme.onError,
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -794,13 +850,13 @@ private fun PermissionRow(
                     title,
                     style = MaterialTheme.typography.titleMedium,
                     color = if (granted) MaterialTheme.colorScheme.onSecondaryContainer
-                    else MaterialTheme.colorScheme.onSurface,
+                    else MaterialTheme.colorScheme.onErrorContainer,
                 )
                 Text(
                     rationale,
                     style = MaterialTheme.typography.bodySmall,
                     color = if (granted) MaterialTheme.colorScheme.onSecondaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    else MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
             Spacer(Modifier.width(8.dp))
@@ -812,7 +868,7 @@ private fun PermissionRow(
             } else {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowForward, "grant",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
         }

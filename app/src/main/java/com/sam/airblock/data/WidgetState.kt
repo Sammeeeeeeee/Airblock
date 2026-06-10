@@ -40,6 +40,8 @@ data class WidgetState(
     val destFlag: String? = null,
     val photoPath: String? = null,
     val photoCredit: String? = null,
+    /** Cached airline-logo PNG for the operating airline, when known. */
+    val airlineLogoPath: String? = null,
     val updatedAt: Long = 0L,
     // Non-standard conditions surfaced as a top-right status icon on the widget
     val refreshing: Boolean = false,
@@ -58,7 +60,7 @@ data class WidgetState(
         status, callsign, typeName, altitudeFt, onGround, speedMph,
         mach?.let { "%.2f".format(it) },
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
-        originIata, destIata, photoPath,
+        originIata, destIata, photoPath, airlineLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
         specialType, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,
