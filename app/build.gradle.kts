@@ -42,6 +42,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    lint {
+        // The androidx 1.5/1.11-alpha artifacts bundle lint checks built for a
+        // newer lint than AGP 8.7's; the NullSafeMutableLiveData detector
+        // crashes the whole lintVitalRelease run (IncompatibleClassChangeError).
+        // The app has no LiveData, so the check is pure loss. Remove when AGP
+        // is new enough to load those jars natively.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 dependencies {
