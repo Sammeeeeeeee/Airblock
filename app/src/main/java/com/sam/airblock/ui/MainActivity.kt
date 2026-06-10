@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -376,7 +377,7 @@ private fun SettingsScreen(
                         }
                     }
                     Text(
-                        "Refresh every",
+                        "Default refresh",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -390,9 +391,9 @@ private fun SettingsScreen(
                         }
                     }
                     NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
-                        normalLabel = "${intervalSec}s") { wifiMode = it; save() }
+                        normalLabel = "Default (${intervalSec}s)") { wifiMode = it; save() }
                     NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
-                        normalLabel = "${intervalSec}s") { dataMode = it; save() }
+                        normalLabel = "Default (${intervalSec}s)") { dataMode = it; save() }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -556,18 +557,31 @@ private fun NetworkCard(
         state.updatedAt == 0L -> "—"
         else -> {
             val secs = ((state.updatedAt + intervalMs - now) / 1000).coerceAtLeast(0)
-            if (secs >= 90) "~${(secs + 30) / 60} min" else "~${secs}s"
+            if (secs >= 90) "${(secs + 30) / 60} min" else "${secs}s"
         }
     }
+    val progress = if (intervalMs != null && state.updatedAt > 0)
+        ((now - state.updatedAt).toFloat() / intervalMs).coerceIn(0f, 1f) else null
 
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(Modifier.padding(vertical = 14.dp)) {
-            StatCell(netIcon, netLabel, "Network", Modifier.weight(1f))
-            StatCell(R.drawable.ic_clock, nextLabel, "Next refresh", Modifier.weight(1f))
+        Column(Modifier.padding(vertical = 14.dp)) {
+            Row {
+                StatCell(netIcon, netLabel, "Network", Modifier.weight(1f))
+                StatCell(R.drawable.ic_clock, nextLabel, "Next refresh", Modifier.weight(1f))
+            }
+            progress?.let {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp),
+                )
+            }
         }
     }
 }
@@ -610,33 +624,39 @@ private fun NetModeRow(
     normalLabel: String,
     onChange: (NetMode) -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            painterResource(icon), null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        // The first option shows the ACTUAL normal rate, so the override
-        // relationship is self-evident without explainer text
-        val options = listOf(
-            NetMode.NORMAL to normalLabel,
-            NetMode.SLOW to "10 min",
-            NetMode.OFF to "Off",
-        )
-        options.forEachIndexed { i, (value, text) ->
-            SegmentedButton(
-                selected = mode == value,
-                onClick = { onChange(value) },
-                shape = SegmentedButtonDefaults.itemShape(i, options.size),
-            ) { Text(text) }
+    // Indented under "Default refresh" — visually a sub-option of it
+    Column(
+        Modifier.padding(start = 16.dp),
+        Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painterResource(icon), null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            // The first option names the default rate, so the override
+            // relationship is self-evident without explainer text
+            val options = listOf(
+                NetMode.NORMAL to normalLabel,
+                NetMode.SLOW to "10 min",
+                NetMode.OFF to "Off",
+            )
+            options.forEachIndexed { i, (value, text) ->
+                SegmentedButton(
+                    selected = mode == value,
+                    onClick = { onChange(value) },
+                    shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                ) { Text(text) }
+            }
         }
     }
 }
