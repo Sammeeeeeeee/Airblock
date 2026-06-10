@@ -295,17 +295,27 @@ private fun AircraftCard(
 }
 
 /**
- * The middle row: the route pill spans the full width with the airline-logo
- * badge INSIDE it at the right end — same pill, so same height by definition.
+ * The middle row: the route pill takes all width up to the airline-logo
+ * badge, which sits NEXT TO it on the right as its own element.
  */
 @Composable
 private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
     val hasRoute = state.originIata != null || state.destIata != null
-    when {
-        hasRoute -> RoutePill(state, airlineLogo)
-        airlineLogo != null -> Row(modifier = GlanceModifier.fillMaxWidth()) {
+    if (!hasRoute && airlineLogo == null) return
+    Row(
+        modifier = GlanceModifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Weight on a plain Box, with the pill filling it — more reliable
+        // across launchers than weighting the complex pill row directly
+        if (hasRoute) {
+            Box(modifier = GlanceModifier.defaultWeight()) { RoutePill(state) }
+        } else {
             Spacer(GlanceModifier.defaultWeight())
-            AirlineLogoBadge(airlineLogo)
+        }
+        airlineLogo?.let { logo ->
+            Spacer(GlanceModifier.width(6.dp))
+            AirlineLogoBadge(logo)
         }
     }
 }
@@ -316,24 +326,24 @@ private fun AirlineLogoBadge(logo: Bitmap) {
     Box(
         modifier = GlanceModifier
             .background(ColorProvider(androidx.compose.ui.graphics.Color.White))
-            .cornerRadius(13.dp)
-            .padding(3.dp),
+            .cornerRadius(14.dp)
+            .padding(5.dp),
     ) {
         Image(
             provider = ImageProvider(logo),
             contentDescription = "airline",
-            modifier = GlanceModifier.size(20.dp),
+            modifier = GlanceModifier.size(24.dp),
         )
     }
 }
 
 /**
- * Expressive tonal pill spanning the full width: origin left, the plane
- * positioned along a dotted path at its real journey progress,
- * time-to-arrival under it, destination right, airline badge rightmost.
+ * Expressive tonal pill spanning its slot: origin left, the plane positioned
+ * along a dotted path at its real journey progress, time-to-arrival under it,
+ * destination right.
  */
 @Composable
-private fun RoutePill(state: WidgetState, airlineLogo: Bitmap?) {
+private fun RoutePill(state: WidgetState) {
     if (state.originIata == null && state.destIata == null) return
     val context = LocalContext.current
     Row(
@@ -377,10 +387,6 @@ private fun RoutePill(state: WidgetState, airlineLogo: Bitmap?) {
         }
         Endpoint(state.destIata, state.destFlag, state.destCity,
             horizontal = Alignment.End)
-        airlineLogo?.let {
-            Spacer(GlanceModifier.width(8.dp))
-            AirlineLogoBadge(it)
-        }
     }
 }
 
