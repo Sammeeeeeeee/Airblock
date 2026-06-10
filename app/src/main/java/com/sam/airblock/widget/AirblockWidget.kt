@@ -196,16 +196,11 @@ private fun AircraftCard(
     palette: WidgetPalette,
 ) {
     val widgetSize = LocalSize.current
-    val hasRoute = state.originIata != null || state.destIata != null
-    val hasRouteRow = hasRoute || airlineLogo != null
-    val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
-        24.dp /* chips */ - (if (hasRouteRow) 50.dp else 6.dp) /* pill + spacers */
-    // The photo fills the actual row height (fillMaxHeight — never tiny) and
-    // is rendered with Fit so it can NEVER be cropped: any box/photo aspect
-    // mismatch becomes invisible transparent margin, not a chopped airframe.
-    val aspect = if (photo != null && photo.height > 0)
-        (photo.width.toFloat() / photo.height).coerceIn(1.0f, 2.3f) else 1.6f
-    val photoWidth = minOf(topRowHeight * aspect, widgetSize.width * 0.6f)
+    // Photo sizing FROM WIDTH ONLY. Launchers (Niagara et al.) misreport the
+    // widget's height bucket — deriving the photo from height is what made it
+    // render as a narrow cropped strip (v2.2) or a tiny thumbnail (later).
+    // Width is the one dimension launchers report reliably.
+    val photoWidth = widgetSize.width * 0.36f
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -216,9 +211,9 @@ private fun AircraftCard(
             // cornerRadius clips the VIEW — a Fit-letterboxed bitmap sits
             // inside the view, so its corners came out square. Bake the
             // rounding into the bitmap's pixels instead.
-            val roundedPhoto = remember(state.photoPath, topRowHeight.value) {
+            val roundedPhoto = remember(state.photoPath, photoWidth.value) {
                 photo?.let {
-                    roundCorners(it, it.height * 16f / topRowHeight.value.coerceAtLeast(1f))
+                    roundCorners(it, it.width * 16f / photoWidth.value.coerceAtLeast(1f))
                 }
             }
             // Background only behind the placeholder: with Fit, any unused
@@ -505,8 +500,9 @@ private fun ChipsRow(state: WidgetState) {
         // radii, so a true split button isn't possible)
         Chip(
             icon = R.drawable.ic_speed,
+            // Thin spaces around the separator: the row is width-critical
             label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
-                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
+                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
             bg = GlanceTheme.colors.tertiaryContainer,
             fg = GlanceTheme.colors.onTertiaryContainer,
         )
@@ -519,8 +515,10 @@ private fun ChipsRow(state: WidgetState) {
         )
         state.registration?.let { reg ->
             ChipGap()
+            // No icon: a tag glyph says nothing the registration text doesn't,
+            // and this row hasn't a dp to spare — it's the chip that clips
             Chip(
-                icon = R.drawable.ic_tag,
+                icon = null,
                 label = reg,
                 bg = GlanceTheme.colors.surfaceVariant,
                 fg = GlanceTheme.colors.onSurfaceVariant,
@@ -529,33 +527,35 @@ private fun ChipsRow(state: WidgetState) {
     }
 }
 
-/** Minimum 5dp between pills; the weighted spacer absorbs all leftover width. */
+/** Minimum 4dp between pills; the weighted spacer absorbs all leftover width. */
 @Composable
 private fun RowScope.ChipGap() {
-    Spacer(GlanceModifier.width(5.dp))
+    Spacer(GlanceModifier.width(4.dp))
     Spacer(GlanceModifier.defaultWeight())
 }
 
 @Composable
 private fun Chip(
-    icon: Int,
+    icon: Int?,
     label: String,
     bg: ColorProvider,
     fg: ColorProvider,
 ) {
     Row(
         modifier = GlanceModifier.background(bg).cornerRadius(12.dp)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 5.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Image(
-            provider = ImageProvider(icon),
-            contentDescription = null,
-            colorFilter = ColorFilter.tint(fg),
-            modifier = GlanceModifier.size(11.dp),
-        )
-        Spacer(GlanceModifier.width(3.dp))
+        icon?.let {
+            Image(
+                provider = ImageProvider(it),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(fg),
+                modifier = GlanceModifier.size(10.dp),
+            )
+            Spacer(GlanceModifier.width(2.dp))
+        }
         Text(text = label, style = TextStyle(fontSize = 10.sp, color = fg), maxLines = 1)
     }
 }
