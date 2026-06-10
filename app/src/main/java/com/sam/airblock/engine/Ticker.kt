@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
+import com.sam.airblock.data.AirlineLogoRepo
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PhotoRepo
@@ -27,6 +28,7 @@ class Ticker(private val context: Context) {
 
     private val location = LocationProvider(context)
     private val photos = PhotoRepo(context)
+    private val airlineLogos = AirlineLogoRepo(context)
     private val gates = Gates(context)
     private val api = AdsbApi()
 
@@ -37,6 +39,12 @@ class Ticker(private val context: Context) {
         private set
 
     suspend fun tick() {
+        // The badge spinner must reflect EVERY refresh (automatic ones too),
+        // not just manual taps — flip it on now; every exit path below
+        // publishes a state with refreshing=false, so it can't get stuck.
+        val (p0, n0) = WidgetStateStore.update(context) { it.copy(refreshing = true) }
+        if (p0.renderKey() != n0.renderKey()) AirblockWidget().updateAll(context)
+
         val settings = SettingsStore.read(context)
         val log = settings.logEnabled
 
@@ -121,6 +129,7 @@ class Ticker(private val context: Context) {
             }
 
             val photo = photos.photoFor(ac.hex)
+            val airlineLogo = airlineLogos.logoFor(callsign)
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
                 fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
@@ -156,6 +165,7 @@ class Ticker(private val context: Context) {
                 destFlag = Units.flagEmoji(dest?.countryIso2),
                 photoPath = photo?.file?.absolutePath,
                 photoCredit = photo?.photographer,
+                airlineLogoPath = airlineLogo?.absolutePath,
                 updatedAt = System.currentTimeMillis(),
                 staleAfterMs = staleAfter,
                 modeLabel = modeLabel,

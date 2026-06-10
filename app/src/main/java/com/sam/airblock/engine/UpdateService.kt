@@ -177,9 +177,11 @@ class UpdateService : Service() {
                     awaitWake(null)
                 }
                 !gates.launcherForeground() -> {
-                    // Another app is open (Netflix etc.) — slow local re-check,
-                    // no network. Interruptible so a tap reacts instantly.
-                    Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in 30s")
+                    // Another app is open (Netflix etc.) — cheap local re-check,
+                    // no network. There is no broadcast for "launcher returned to
+                    // front", so the poll must be tight enough that an overdue
+                    // refresh fires near-instantly when the user comes home.
+                    Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in ${HIDDEN_RECHECK_MS / 1000}s")
                     logPhase("hidden", "paused — ${gates.foregroundPackage() ?: "another app"} in front")
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
@@ -282,7 +284,7 @@ class UpdateService : Service() {
         private const val TAG = "Airblock"
         private const val CHANNEL_ID = "airblock_updates"
         private const val NOTIF_ID = 1
-        private const val HIDDEN_RECHECK_MS = 30_000L
+        private const val HIDDEN_RECHECK_MS = 5_000L
         private const val MAX_BACKOFF_MS = 120_000L
         private const val NET_RECHECK_MS = 5L * 60 * 1000
         private const val SLOW_INTERVAL_MS = 10L * 60 * 1000

@@ -34,7 +34,6 @@ import androidx.glance.layout.Column
 import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -66,8 +65,11 @@ class AirblockWidget : GlanceAppWidget() {
             val photo = remember(state.photoPath) {
                 state.photoPath?.let { decodePhoto(it) }
             }
+            val airlineLogo = remember(state.airlineLogoPath) {
+                state.airlineLogoPath?.let { BitmapFactory.decodeFile(it) }
+            }
             GlanceTheme {
-                WidgetContent(state, photo)
+                WidgetContent(state, photo, airlineLogo)
             }
         }
     }
@@ -111,7 +113,7 @@ private fun widgetPalette(specialType: String?): WidgetPalette = when (specialTy
 }
 
 @Composable
-private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
+private fun WidgetContent(state: WidgetState, photo: Bitmap?, airlineLogo: Bitmap?) {
     // Non-standard aircraft (military, police helicopters…) get an
     // attention-grabbing tonal background — content colors must follow the
     // container role or dark-theme contrast breaks.
@@ -127,7 +129,7 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
             .clickable(actionRunCallback<RefreshAction>()),
     ) {
         when (state.status) {
-            WidgetState.Status.OK -> AircraftCard(state, photo, palette)
+            WidgetState.Status.OK -> AircraftCard(state, photo, airlineLogo, palette)
             WidgetState.Status.NO_AIRCRAFT -> EmptyMessage("No aircraft nearby")
             WidgetState.Status.NO_LOCATION -> EmptyMessage("Location unavailable — tap to retry")
             else -> EmptyMessage("Airblock — tap to refresh")
@@ -138,8 +140,9 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?) {
 }
 
 /**
- * Top-right indicator for non-standard conditions, priority:
- * refreshing (live spinner) > battery saver > failed refreshes > stale data.
+ * Top-right status indicator, always visible, priority:
+ * refreshing (live spinner) > battery saver > failed refreshes > stale data
+ * > live (auto-updates running).
  */
 @Composable
 private fun StatusBadge(state: WidgetState) {
@@ -157,7 +160,7 @@ private fun StatusBadge(state: WidgetState) {
         isStale(state) -> {
             icon = R.drawable.ic_clock; tint = GlanceTheme.colors.outline
         }
-        else -> return
+        else -> { icon = R.drawable.ic_sync; tint = GlanceTheme.colors.outline }
     }
     Box(modifier = GlanceModifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
         Box(
@@ -184,15 +187,28 @@ private fun StatusBadge(state: WidgetState) {
 }
 
 @Composable
-private fun AircraftCard(state: WidgetState, photo: Bitmap?, palette: WidgetPalette) {
-    // Planespotters thumbnails are 3:2 landscape (419x280) — size the photo
-    // box to exactly that ratio from the real top-row height.
+private fun AircraftCard(
+    state: WidgetState,
+    photo: Bitmap?,
+    airlineLogo: Bitmap?,
+    palette: WidgetPalette,
+) {
     val widgetSize = LocalSize.current
     val hasRoute = state.originIata != null || state.destIata != null
+    val hasRouteRow = hasRoute || airlineLogo != null
     val topRowHeight = widgetSize.height - 20.dp /* card padding */ -
-        24.dp /* chips */ - (if (hasRoute) 50.dp else 6.dp) /* pill + spacers */
-    // Slightly wider than the source 3:2 so the airframe never gets side-cropped
-    val photoWidth = topRowHeight * 1.6f
+        24.dp /* chips */ - (if (hasRouteRow) 50.dp else 6.dp) /* pill + spacers */
+    // Planespotters thumbnails are NOT all 3:2 — photographers upload anything
+    // from near-square to panoramic, and a fixed-ratio box visibly crops the
+    // airframe on every mismatch. Follow the actual photo's aspect (clamped to
+    // keep the layout sane), so ContentScale.Crop has ~nothing left to crop.
+    val aspect = if (photo != null && photo.height > 0)
+        (photo.width.toFloat() / photo.height).coerceIn(1.2f, 2.0f) else 1.6f
+    // Never let the photo eat the text column (tall widgets would otherwise
+    // produce a huge box) — and when width-capped, shrink the height with it
+    // so the box keeps the photo's aspect instead of going portrait.
+    val photoHeight = minOf(topRowHeight, widgetSize.width * 0.55f / aspect)
+    val photoWidth = photoHeight * aspect
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -201,7 +217,8 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?, palette: WidgetPale
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = GlanceModifier.fillMaxHeight().width(photoWidth).cornerRadius(16.dp)
+                modifier = GlanceModifier.height(photoHeight).width(photoWidth)
+                    .cornerRadius(16.dp)
                     .background(GlanceTheme.colors.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
@@ -270,24 +287,56 @@ private fun AircraftCard(state: WidgetState, photo: Bitmap?, palette: WidgetPale
             }
         }
         Spacer(GlanceModifier.height(6.dp))
-        RoutePill(state)
+        RouteRow(state, airlineLogo)
         Spacer(GlanceModifier.height(6.dp))
         ChipsRow(state)
     }
 }
 
 /**
- * Expressive tonal pill spanning the full width: origin left, the plane
- * positioned along a dotted path at its real journey progress, ETA under it,
- * destination right.
+ * The middle row: airline-logo badge (when known) next to the route pill —
+ * the pill no longer needs the full width, so the logo lives on its level.
  */
 @Composable
-private fun RoutePill(state: WidgetState) {
+private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
+    val hasRoute = state.originIata != null || state.destIata != null
+    if (!hasRoute && airlineLogo == null) return
+    Row(
+        modifier = GlanceModifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        airlineLogo?.let { logo ->
+            // Airline logos are drawn for light backgrounds — keep the badge
+            // white in both themes
+            Box(
+                modifier = GlanceModifier
+                    .background(ColorProvider(androidx.compose.ui.graphics.Color.White))
+                    .cornerRadius(14.dp)
+                    .padding(5.dp),
+            ) {
+                Image(
+                    provider = ImageProvider(logo),
+                    contentDescription = "airline",
+                    modifier = GlanceModifier.size(24.dp),
+                )
+            }
+            if (hasRoute) Spacer(GlanceModifier.width(6.dp))
+        }
+        if (hasRoute) RoutePill(state, GlanceModifier.defaultWeight())
+    }
+}
+
+/**
+ * Expressive tonal pill: origin left, the plane positioned along a dotted
+ * path at its real journey progress, time-to-arrival under it, destination
+ * right. Width comes from the caller (weighted next to the airline badge).
+ */
+@Composable
+private fun RoutePill(state: WidgetState, modifier: GlanceModifier = GlanceModifier) {
     if (state.originIata == null && state.destIata == null) return
     val context = LocalContext.current
     Row(
-        modifier = GlanceModifier
-            .fillMaxWidth()
+        modifier = modifier
             .background(GlanceTheme.colors.secondaryContainer)
             .cornerRadius(20.dp) // full pill: radius ≈ half the pill height
             .padding(horizontal = 12.dp, vertical = 5.dp),
@@ -308,14 +357,20 @@ private fun RoutePill(state: WidgetState) {
                 contentDescription = "route progress",
                 modifier = GlanceModifier.fillMaxWidth().height(14.dp),
             )
+            // Remaining time, not a clock time: "ETA 14:05" reads as the
+            // phone's timezone while trackers show the DESTINATION's local
+            // arrival — a duration can't be misread either way.
             state.etaEpochMs?.let { eta ->
-                Text(
-                    text = "ETA " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-                        .format(java.util.Date(eta)),
-                    style = TextStyle(fontSize = 10.sp,
-                        color = GlanceTheme.colors.onSecondaryContainer),
-                    maxLines = 1,
-                )
+                val mins = ((eta - System.currentTimeMillis()) / 60_000).toInt()
+                if (mins in 0..(24 * 60)) {
+                    Text(
+                        text = "ETA " + if (mins < 60) "${mins} min"
+                        else "${mins / 60}h ${mins % 60}m",
+                        style = TextStyle(fontSize = 10.sp,
+                            color = GlanceTheme.colors.onSecondaryContainer),
+                        maxLines = 1,
+                    )
+                }
             }
         }
         Endpoint(state.destIata, state.destFlag, state.destCity,
@@ -385,9 +440,15 @@ private fun Endpoint(
 
 @Composable
 private fun ChipsRow(state: WidgetState) {
-    // Chips wrap their content so nothing truncates; the reg chip (least
-    // important) absorbs whatever width is left over.
-    Row(modifier = GlanceModifier.fillMaxWidth()) {
+    // RemoteViews (and therefore Glance) cannot scroll horizontally, so the
+    // row has to FIT: narrow widgets get tighter chips without the mach
+    // suffix, and the reg chip sits in a weighted box so it clips into the
+    // leftover width instead of being pushed off the right edge.
+    val compact = LocalSize.current.width < 320.dp
+    Row(
+        modifier = GlanceModifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         // Emergency squawk leads the row in error colors
         state.squawkAlert?.let {
             Chip(
@@ -395,40 +456,48 @@ private fun ChipsRow(state: WidgetState) {
                 label = it,
                 bg = GlanceTheme.colors.errorContainer,
                 fg = GlanceTheme.colors.onErrorContainer,
+                compact = compact,
             )
-            Spacer(GlanceModifier.width(5.dp))
+            Spacer(GlanceModifier.width(4.dp))
         }
         Chip(
             icon = R.drawable.ic_altitude,
             label = if (state.onGround) "ground" else Units.formatAltitude(state.altitudeFt),
             bg = GlanceTheme.colors.secondaryContainer,
             fg = GlanceTheme.colors.onSecondaryContainer,
+            compact = compact,
         )
-        Spacer(GlanceModifier.width(5.dp))
+        Spacer(GlanceModifier.width(4.dp))
         // Speed and Mach combined in one pill (Glance can't do per-corner
         // radii, so a true split button isn't possible)
         Chip(
             icon = R.drawable.ic_speed,
             label = (state.speedMph?.let { Units.formatSpeed(it) } ?: "—") +
-                (state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
+                (if (compact) "" else
+                    state.mach?.let { " · M" + "%.2f".format(it).trimStart('0') } ?: ""),
             bg = GlanceTheme.colors.tertiaryContainer,
             fg = GlanceTheme.colors.onTertiaryContainer,
+            compact = compact,
         )
-        Spacer(GlanceModifier.width(5.dp))
+        Spacer(GlanceModifier.width(4.dp))
         Chip(
             icon = R.drawable.ic_distance,
             label = state.distanceKm?.let { Units.formatKm(it) } ?: "—",
             bg = GlanceTheme.colors.primaryContainer,
             fg = GlanceTheme.colors.onPrimaryContainer,
+            compact = compact,
         )
         state.registration?.let { reg ->
-            Spacer(GlanceModifier.width(5.dp))
-            Chip(
-                icon = R.drawable.ic_tag,
-                label = reg,
-                bg = GlanceTheme.colors.surfaceVariant,
-                fg = GlanceTheme.colors.onSurfaceVariant,
-            )
+            Spacer(GlanceModifier.width(4.dp))
+            Box(modifier = GlanceModifier.defaultWeight()) {
+                Chip(
+                    icon = R.drawable.ic_tag,
+                    label = reg,
+                    bg = GlanceTheme.colors.surfaceVariant,
+                    fg = GlanceTheme.colors.onSurfaceVariant,
+                    compact = compact,
+                )
+            }
         }
     }
 }
@@ -439,11 +508,14 @@ private fun Chip(
     label: String,
     bg: ColorProvider,
     fg: ColorProvider,
-    modifier: GlanceModifier = GlanceModifier,
+    compact: Boolean = false,
 ) {
     Row(
-        modifier = modifier.background(bg).cornerRadius(12.dp)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+        modifier = GlanceModifier.background(bg).cornerRadius(12.dp)
+            .padding(
+                horizontal = if (compact) 5.dp else 6.dp,
+                vertical = if (compact) 3.dp else 4.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -451,10 +523,14 @@ private fun Chip(
             provider = ImageProvider(icon),
             contentDescription = null,
             colorFilter = ColorFilter.tint(fg),
-            modifier = GlanceModifier.size(11.dp),
+            modifier = GlanceModifier.size(if (compact) 10.dp else 11.dp),
         )
         Spacer(GlanceModifier.width(3.dp))
-        Text(text = label, style = TextStyle(fontSize = 10.sp, color = fg), maxLines = 1)
+        Text(
+            text = label,
+            style = TextStyle(fontSize = if (compact) 9.sp else 10.sp, color = fg),
+            maxLines = 1,
+        )
     }
 }
 
