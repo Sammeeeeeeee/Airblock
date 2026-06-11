@@ -54,7 +54,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             mkdir -p ~/.android
-            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            # tr strips CR/LF a Windows-side `gh secret set` may have smuggled
+            # in — GNU base64 hard-fails on them ("invalid input")
+            echo "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > ~/.android/debug.keystore
             echo "Using persistent debug keystore from secret"
           else
             echo "::warning::DEBUG_KEYSTORE_B64 secret not set — this APK is signed with a one-off key generated on this runner. Installing it over an existing install fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE (uninstall/reinstall required). Set the secret to make builds update in place."
