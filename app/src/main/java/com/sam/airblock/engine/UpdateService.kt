@@ -59,6 +59,9 @@ class UpdateService : Service() {
     private lateinit var gates: Gates
     private lateinit var ticker: Ticker
     private var lastPhase: String? = null
+    // Set while gated/hidden so the FIRST tick after the widget becomes
+    // visible again fires immediately instead of waiting out the interval
+    private var wasInactive = false
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -174,6 +177,7 @@ class UpdateService : Service() {
                         !gates.screenOn() -> logPhase("screenoff", "paused — screen off")
                         else -> logPhase("locked", "paused — locked")
                     }
+                    wasInactive = true
                     awaitWake(null)
                 }
                 !gates.launcherForeground() -> {
@@ -183,6 +187,7 @@ class UpdateService : Service() {
                     // refresh fires near-instantly when the user comes home.
                     Log.d(TAG, "hidden: fg=${gates.foregroundPackage()} — recheck in ${HIDDEN_RECHECK_MS / 1000}s")
                     logPhase("hidden", "paused — ${gates.foregroundPackage() ?: "another app"} in front")
+                    wasInactive = true
                     awaitWake(HIDDEN_RECHECK_MS)
                 }
                 else -> {
@@ -193,19 +198,26 @@ class UpdateService : Service() {
                     val (mode, why) = gates.effectiveMode(s)
                     Log.d(TAG, "visible (fg=${gates.foregroundPackage() ?: "?"}) " +
                         "net=$why mode=$mode")
+                    // Coming back from locked/hidden with data older than a few
+                    // seconds: the user is LOOKING at the widget right now —
+                    // refresh immediately instead of waiting out the interval.
+                    val resumed = wasInactive &&
+                        System.currentTimeMillis() - lastTickAt > RESUME_FORCE_AGE_MS
+                    wasInactive = false
                     when (mode) {
                         NetMode.OFF -> {
                             logPhase("netoff-$why", "paused — off ($why)")
                             setPausedFlag("off ($why)")
+                            wasInactive = true
                             awaitWake(NET_RECHECK_MS)
                         }
                         NetMode.SLOW -> {
                             logPhase("active-slow-$why", "updates running ($why · 10 min)")
-                            tickAndWait(SLOW_INTERVAL_MS)
+                            tickAndWait(SLOW_INTERVAL_MS, force = resumed)
                         }
                         NetMode.NORMAL -> {
                             logPhase("active-$why", "updates running ($why · ${s.intervalSec}s)")
-                            tickAndWait(s.intervalSec * 1000L)
+                            tickAndWait(s.intervalSec * 1000L, force = resumed)
                         }
                     }
                 }
@@ -284,7 +296,8 @@ class UpdateService : Service() {
         private const val TAG = "Airblock"
         private const val CHANNEL_ID = "airblock_updates"
         private const val NOTIF_ID = 1
-        private const val HIDDEN_RECHECK_MS = 5_000L
+        private const val HIDDEN_RECHECK_MS = 2_500L
+        private const val RESUME_FORCE_AGE_MS = 5_000L
         private const val MAX_BACKOFF_MS = 120_000L
         private const val NET_RECHECK_MS = 5L * 60 * 1000
         private const val SLOW_INTERVAL_MS = 10L * 60 * 1000

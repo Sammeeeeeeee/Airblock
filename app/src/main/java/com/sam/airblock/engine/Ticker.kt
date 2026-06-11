@@ -12,6 +12,7 @@ import com.sam.airblock.data.RouteResult
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.util.AirlineCodes
 import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
@@ -23,6 +24,12 @@ import java.io.IOException
  * One refresh cycle: location → nearest aircraft → (cached) route + photo →
  * widget state. Shared by [UpdateService] (15 s loop) and [KeepAliveWorker]
  * (fallback refresh when the service has been killed).
+ *
+ * Publishes in TWO phases so the widget never sits on a spinner waiting for
+ * slow media: the aircraft itself (callsign, altitude, speed…) goes out the
+ * moment the closest-aircraft response lands, reusing the previous tick's
+ * route/photo/logo when they still apply; the enriched state follows once the
+ * route and media fetches finish.
  */
 class Ticker(private val context: Context) {
 
@@ -38,12 +45,50 @@ class Ticker(private val context: Context) {
     var consecutiveErrors = 0
         private set
 
+    /** Mutable per-tick checklist, persisted on every transition. */
+    private val stageOrder = listOf("location", "aircraft", "route", "media")
+    private var stages = linkedMapOf<String, WidgetState.Stage>()
+
+    private fun resetStages() {
+        stages = linkedMapOf(
+            "location" to WidgetState.Stage("location", "Location", WidgetState.Stage.PENDING),
+            "aircraft" to WidgetState.Stage("aircraft", "Nearest aircraft", WidgetState.Stage.PENDING),
+            "route" to WidgetState.Stage("route", "Route", WidgetState.Stage.PENDING),
+            "media" to WidgetState.Stage("media", "Photo & airline logo", WidgetState.Stage.PENDING),
+        )
+    }
+
+    private fun stageList() = stageOrder.mapNotNull { stages[it] }
+
+    /**
+     * Record a stage transition and persist it. The widget's renderKey ignores
+     * stage/checklist fields, so these writes reach the in-app status card via
+     * the DataStore flow with zero RemoteViews churn.
+     */
+    private suspend fun setStage(key: String, state: String, label: String? = null,
+        stageText: String? = null) {
+        stages[key]?.let { stages[key] = it.copy(state = state, label = label ?: it.label) }
+        val (prev, next) = WidgetStateStore.update(context) {
+            it.copy(refreshing = true, stages = stageList(),
+                refreshStage = stageText ?: it.refreshStage)
+        }
+        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
+    }
+
+    /** Mark whatever is still running/pending as failed — used on tick failure. */
+    private fun failOpenStages() {
+        stages.replaceAll { _, s ->
+            if (s.state == WidgetState.Stage.RUNNING || s.state == WidgetState.Stage.PENDING)
+                s.copy(state = WidgetState.Stage.FAILED) else s
+        }
+    }
+
     suspend fun tick() {
         // The badge spinner must reflect EVERY refresh (automatic ones too),
         // not just manual taps — flip it on now; every exit path below
         // publishes a state with refreshing=false, so it can't get stuck.
-        // The stage text feeds the in-app status card only.
-        setStage("Getting location…")
+        resetStages()
+        setStage("location", WidgetState.Stage.RUNNING, stageText = "Getting location…")
 
         val settings = SettingsStore.read(context)
         val log = settings.logEnabled
@@ -66,13 +111,17 @@ class Ticker(private val context: Context) {
         if (fix == null) {
             Log.d(TAG, "tick: no location fix")
             if (log) EventLog.append(context, "update skipped — no location fix")
+            stages["location"] = stages["location"]!!.copy(state = WidgetState.Stage.FAILED)
             publish(WidgetState(status = WidgetState.Status.NO_LOCATION,
                 updatedAt = System.currentTimeMillis(),
-                staleAfterMs = staleAfter, modeLabel = modeLabel))
+                staleAfterMs = staleAfter, modeLabel = modeLabel,
+                stages = stageList()))
             return
         }
         try {
-            setStage("Finding the nearest aircraft…")
+            setStage("location", WidgetState.Stage.DONE)
+            setStage("aircraft", WidgetState.Stage.RUNNING,
+                stageText = "Finding the nearest aircraft…")
             // Ground traffic is excluded: if the nearest transponder is a
             // parked/taxiing plane, fall back to the nearest airborne one
             val ac = api.closest(fix.lat, fix.lon, settings.radiusNm)
@@ -81,66 +130,41 @@ class Ticker(private val context: Context) {
             if (ac == null) {
                 Log.d(TAG, "tick: no aircraft within ${settings.radiusNm} nm")
                 if (log) EventLog.append(context, "updated — no aircraft within ${settings.radiusNm} nm")
+                setStage("aircraft", WidgetState.Stage.DONE)
                 publish(WidgetState(status = WidgetState.Status.NO_AIRCRAFT,
                     updatedAt = System.currentTimeMillis(),
-                    staleAfterMs = staleAfter, modeLabel = modeLabel))
+                    staleAfterMs = staleAfter, modeLabel = modeLabel,
+                    stages = stageList()))
                 return
             }
+            setStage("aircraft", WidgetState.Stage.DONE)
 
-            setStage("Loading route, photo & logo…")
             val callsign = ac.callsign
-            val route: RouteResult? = when {
-                callsign == null -> null
-                cachedRoute?.first == callsign -> cachedRoute?.second
-                else -> try {
-                    // Cache only definitive answers (incl. a genuine 404 -> null);
-                    // transient failures must retry on the next tick
-                    api.route(callsign).also {
-                        cachedRoute = callsign to it
-                        if (it == null) Log.d(TAG, "route: none recorded for $callsign")
-                    }
-                } catch (e: IOException) {
-                    Log.w(TAG, "route lookup failed for $callsign: $e")
-                    null
-                }
-            }
-            // Multi-leg routes (e.g. SDF-DUB-STN-CGN): show the leg the plane
-            // is actually flying, not the overall first/last airports.
             val planeLat = ac.lat ?: fix.lat
             val planeLon = ac.lon ?: fix.lon
-            val leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
-            val origin = leg?.first
-            val dest = leg?.second
 
-            // Journey progress + ETA from great-circle geometry and ground speed
-            var progress: Float? = null
-            var etaEpochMs: Long? = null
-            if (origin?.lat != null && origin.lon != null &&
-                dest?.lat != null && dest.lon != null
-            ) {
-                val fromOrigin = Units.haversineKm(origin.lat, origin.lon, planeLat, planeLon)
-                val toDest = Units.haversineKm(planeLat, planeLon, dest.lat, dest.lon)
-                if (fromOrigin + toDest > 1.0) {
-                    progress = (fromOrigin / (fromOrigin + toDest)).toFloat()
-                }
-                val gsKmh = (ac.gs ?: 0.0) * Units.NM_TO_KM
-                if (gsKmh > 150 && toDest > 2.0) {
-                    etaEpochMs = System.currentTimeMillis() +
-                        (toDest / gsKmh * 3_600_000).toLong()
-                }
-            }
+            // ---- Phase 1: publish the aircraft NOW ------------------------
+            // The whole point of a tap is "what's overhead" — that answer is
+            // already in hand. Route/photo/logo from the previous tick still
+            // apply when the flight/airframe hasn't changed; anything else is
+            // filled in by phase 2.
+            val prev = WidgetStateStore.read(context)
+            val sameAirframe = prev.hex != null && prev.hex == ac.hex
+            val sameFlight = prev.callsign != null && callsign != null &&
+                prev.callsign == callsign
+            val sameAirline = callsign != null &&
+                AirlineCodes.icaoPrefix(callsign) != null &&
+                AirlineCodes.icaoPrefix(callsign) == AirlineCodes.icaoPrefix(prev.callsign)
 
-            val photo = photos.photoFor(ac.hex)
-            val airlineLogo = airlineLogos.logoFor(callsign)
+            val routeCached = callsign != null && cachedRoute?.first == callsign
+            var route: RouteResult? = if (routeCached) cachedRoute?.second else null
+            var leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
+            var geo = legGeometry(leg, planeLat, planeLon, ac.gs)
 
-            Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
-                fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
-                route?.airportCodes ?: "?", photo != null))
-            if (log) EventLog.append(context,
-                "updated — ${callsign ?: ac.hex}" +
-                    (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
-
-            publish(WidgetState(
+            fun buildState(
+                photoPath: String?, photoCredit: String?, logoPath: String?,
+                refreshing: Boolean,
+            ) = WidgetState(
                 status = WidgetState.Status.OK,
                 callsign = callsign ?: ac.r ?: ac.hex.uppercase(),
                 // desc is often absent from /v2/closest — resolve the ICAO code
@@ -155,23 +179,81 @@ class Ticker(private val context: Context) {
                 speedMph = ac.gs?.let { Units.ktsToMph(it) },
                 mach = ac.mach,
                 distanceKm = ac.dst?.let { Units.nmToKm(it) },
-                routeProgress = progress,
-                etaEpochMs = etaEpochMs,
+                routeProgress = geo.progress
+                    ?: prev.routeProgress.takeIf { sameFlight && leg == null },
+                etaEpochMs = geo.etaEpochMs
+                    ?: prev.etaEpochMs.takeIf { sameFlight && leg == null },
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 squawkAlert = Squawk.emergencyLabel(ac.squawk),
-                originIata = origin?.iata,
-                originCity = origin?.location,
-                originFlag = Units.flagEmoji(origin?.countryIso2),
-                destIata = dest?.iata,
-                destCity = dest?.location,
-                destFlag = Units.flagEmoji(dest?.countryIso2),
-                photoPath = photo?.file?.absolutePath,
-                photoCredit = photo?.photographer,
-                airlineLogoPath = airlineLogo?.absolutePath,
+                originIata = leg?.first?.iata ?: prev.originIata.takeIf { sameFlight },
+                originCity = leg?.first?.location ?: prev.originCity.takeIf { sameFlight },
+                originFlag = leg?.first?.let { Units.flagEmoji(it.countryIso2) }
+                    ?: prev.originFlag.takeIf { sameFlight },
+                destIata = leg?.second?.iata ?: prev.destIata.takeIf { sameFlight },
+                destCity = leg?.second?.location ?: prev.destCity.takeIf { sameFlight },
+                destFlag = leg?.second?.let { Units.flagEmoji(it.countryIso2) }
+                    ?: prev.destFlag.takeIf { sameFlight },
+                photoPath = photoPath,
+                photoCredit = photoCredit,
+                airlineLogoPath = logoPath,
                 updatedAt = System.currentTimeMillis(),
+                refreshing = refreshing,
+                refreshStage = if (refreshing) "Loading route, photo & logo…" else null,
+                stages = stageList(),
                 staleAfterMs = staleAfter,
                 modeLabel = modeLabel,
+            )
+
+            publish(buildState(
+                photoPath = prev.photoPath.takeIf { sameAirframe },
+                photoCredit = prev.photoCredit.takeIf { sameAirframe },
+                logoPath = prev.airlineLogoPath.takeIf { sameAirline },
+                refreshing = true,
             ))
+
+            // ---- Phase 2: route + media enrichment ------------------------
+            when {
+                callsign == null ->
+                    setStage("route", WidgetState.Stage.DONE, label = "Route (no callsign)")
+                routeCached ->
+                    setStage("route", WidgetState.Stage.DONE, label = "Route (cached)")
+                else -> {
+                    setStage("route", WidgetState.Stage.RUNNING)
+                    try {
+                        // Cache only definitive answers (incl. a genuine 404 -> null);
+                        // transient failures must retry on the next tick
+                        route = api.route(callsign).also {
+                            cachedRoute = callsign to it
+                            if (it == null) Log.d(TAG, "route: none recorded for $callsign")
+                        }
+                        leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
+                        geo = legGeometry(leg, planeLat, planeLon, ac.gs)
+                        setStage("route", WidgetState.Stage.DONE)
+                    } catch (e: IOException) {
+                        Log.w(TAG, "route lookup failed for $callsign: $e")
+                        setStage("route", WidgetState.Stage.FAILED)
+                    }
+                }
+            }
+
+            setStage("media", WidgetState.Stage.RUNNING)
+            // Disk-cached per hex/airline — instant for anything already seen;
+            // the previous tick's media stays as fallback when a fetch fails
+            val photo = photos.photoFor(ac.hex)
+            val photoPath = photo?.file?.absolutePath ?: prev.photoPath.takeIf { sameAirframe }
+            val photoCredit = photo?.photographer ?: prev.photoCredit.takeIf { sameAirframe }
+            val logoPath = airlineLogos.logoFor(callsign)?.absolutePath
+                ?: prev.airlineLogoPath.takeIf { sameAirline }
+            setStage("media", WidgetState.Stage.DONE)
+
+            Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
+                fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
+                route?.airportCodes ?: "?", photoPath != null))
+            if (log) EventLog.append(context,
+                "updated — ${callsign ?: ac.hex}" +
+                    (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
+
+            publish(buildState(photoPath, photoCredit, logoPath, refreshing = false))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -182,14 +264,43 @@ class Ticker(private val context: Context) {
             Log.w(TAG, "tick failed (${consecutiveErrors}x): ${e.message}")
             if (log) EventLog.append(context,
                 "update FAILED (×$consecutiveErrors) — ${e.message ?: e.javaClass.simpleName}")
+            failOpenStages()
             // Keep showing last good data, but surface the failure icon
             val (prev, next) = WidgetStateStore.update(context) {
                 it.copy(errorCount = consecutiveErrors, refreshing = false,
-                    refreshStage = null, pausedReason = null,
+                    refreshStage = null, stages = stageList(), pausedReason = null,
                     lastError = e.message ?: e.javaClass.simpleName)
             }
             if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
         }
+    }
+
+    private data class LegGeometry(val progress: Float? = null, val etaEpochMs: Long? = null)
+
+    /** Journey progress + ETA from great-circle geometry and ground speed. */
+    private fun legGeometry(
+        leg: Pair<com.sam.airblock.data.RouteAirport, com.sam.airblock.data.RouteAirport>?,
+        planeLat: Double,
+        planeLon: Double,
+        gsKts: Double?,
+    ): LegGeometry {
+        val origin = leg?.first
+        val dest = leg?.second
+        if (origin?.lat == null || origin.lon == null ||
+            dest?.lat == null || dest.lon == null
+        ) return LegGeometry()
+        var progress: Float? = null
+        var etaEpochMs: Long? = null
+        val fromOrigin = Units.haversineKm(origin.lat, origin.lon, planeLat, planeLon)
+        val toDest = Units.haversineKm(planeLat, planeLon, dest.lat, dest.lon)
+        if (fromOrigin + toDest > 1.0) {
+            progress = (fromOrigin / (fromOrigin + toDest)).toFloat()
+        }
+        val gsKmh = (gsKts ?: 0.0) * Units.NM_TO_KM
+        if (gsKmh > 150 && toDest > 2.0) {
+            etaEpochMs = System.currentTimeMillis() + (toDest / gsKmh * 3_600_000).toLong()
+        }
+        return LegGeometry(progress, etaEpochMs)
     }
 
     /**
@@ -225,19 +336,6 @@ class Ticker(private val context: Context) {
         desc.split(" ").joinToString(" ") { w ->
             if (w.any { it.isDigit() }) w else w.lowercase().replaceFirstChar { it.uppercase() }
         }
-
-    /**
-     * Mark the refresh in progress and record its current stage. Only the
-     * first call per tick redraws the widget (spinner on); later stage changes
-     * don't alter renderKey, so the app's status card sees them via the
-     * DataStore flow with zero extra widget churn.
-     */
-    private suspend fun setStage(stage: String) {
-        val (prev, next) = WidgetStateStore.update(context) {
-            it.copy(refreshing = true, refreshStage = stage)
-        }
-        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
-    }
 
     private suspend fun publish(state: WidgetState) {
         // Atomic swap — concurrent writers (worker, tap) can't interleave
