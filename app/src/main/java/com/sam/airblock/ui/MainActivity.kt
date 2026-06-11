@@ -15,6 +15,7 @@ import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -25,6 +26,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -40,12 +43,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -75,6 +80,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.toShape
@@ -251,52 +257,90 @@ private fun SettingsScreen(
         }
     }
 
-    if (showLog) {
-        LogDialog(
-            logEnabled = logEnabled,
-            onToggle = { on ->
-                logEnabled = on
-                save()
-                if (!on) EventLog.clear(context)
-            },
-            onDismiss = { showLog = false },
-        )
+    BackHandler(enabled = showLog) { showLog = false }
+
+    val widgetState by WidgetStateStore.flow(context)
+        .collectAsState(initial = WidgetState())
+    fun refreshNow() {
+        scope.launch {
+            WidgetStateStore.update(context) { it.copy(refreshing = true) }
+            UpdateService.start(context, tickNow = true)
+        }
     }
 
     val scrollState = rememberScrollState()
     var setupSectionY by remember { mutableStateOf(0) }
-    // The collapsing large header is the signature M3 Expressive app frame
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-        containerColor = MaterialTheme.colorScheme.surface,
-        topBar = {
-            LargeFlexibleTopAppBar(
-                title = { Text("Airblock ✈") },
-                subtitle = { Text("Nearest-plane widget") },
-                actions = {
-                    FilledTonalIconButton(
-                        onClick = { showLog = true },
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        Icon(painterResource(R.drawable.ic_console), "Activity log")
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-            )
+    val pageMotion = MaterialTheme.motionScheme
+    // The activity log is its own PAGE, pushed in like a forward navigation —
+    // the main screen slides away left underneath it
+    AnimatedContent(
+        targetState = showLog,
+        transitionSpec = {
+            if (targetState) {
+                (slideInHorizontally(pageMotion.defaultSpatialSpec()) { it } +
+                    fadeIn(pageMotion.defaultEffectsSpec()))
+                    .togetherWith(
+                        slideOutHorizontally(pageMotion.defaultSpatialSpec()) { -it / 3 } +
+                            fadeOut(pageMotion.defaultEffectsSpec()))
+            } else {
+                (slideInHorizontally(pageMotion.defaultSpatialSpec()) { -it / 3 } +
+                    fadeIn(pageMotion.defaultEffectsSpec()))
+                    .togetherWith(
+                        slideOutHorizontally(pageMotion.defaultSpatialSpec()) { it } +
+                            fadeOut(pageMotion.defaultEffectsSpec()))
+            }
         },
-    ) { innerPadding ->
+        label = "page",
+        modifier = Modifier.fillMaxSize(),
+    ) { logPage ->
+        if (logPage) {
+            LogScreen(
+                logEnabled = logEnabled,
+                onToggle = { on ->
+                    logEnabled = on
+                    save()
+                    if (!on) EventLog.clear(context)
+                },
+                onBack = { showLog = false },
+            )
+        } else {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        PullToRefreshBox(
+            isRefreshing = widgetState.refreshing,
+            onRefresh = ::refreshNow,
+            modifier = Modifier.fillMaxSize(),
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(innerPadding)
+                .statusBarsPadding()
                 .padding(horizontal = 16.dp),
         ) {
             val motion = MaterialTheme.motionScheme
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
+            // Header: the title and the console button on ONE aligned row
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Airblock ✈",
+                        style = MaterialTheme.typography.displaySmallEmphasized,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "Nearest-plane widget",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FilledTonalIconButton(
+                    onClick = { showLog = true },
+                    shapes = IconButtonDefaults.shapes(),
+                ) {
+                    Icon(painterResource(R.drawable.ic_console), "Activity log")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
 
             // ---- Setup-required banner: a new user must not have to guess
             // what to do — point straight at the permission rows below.
@@ -391,17 +435,20 @@ private fun SettingsScreen(
             }
 
             // ---- Live status (mirrors the widget's top-right badge) -------
-            val widgetState by WidgetStateStore.flow(context)
-                .collectAsState(initial = WidgetState())
             SectionLabel("Status")
-            StatusCard(widgetState, onRefresh = {
-                scope.launch {
-                    WidgetStateStore.update(context) { it.copy(refreshing = true) }
-                    UpdateService.start(context, tickNow = true)
-                }
-            })
+            var statusExpanded by remember { mutableStateOf(false) }
+            StatusCard(
+                widgetState,
+                expanded = statusExpanded,
+                onToggle = { statusExpanded = !statusExpanded },
+                onRefresh = ::refreshNow,
+            )
             Spacer(Modifier.height(GroupGap))
             NetworkCard(widgetState, intervalSec, wifiMode, dataMode)
+            Spacer(Modifier.height(GroupGap))
+            RestartRow {
+                scope.launch { UpdateService.forceFullRestart(context) }
+            }
             Spacer(Modifier.height(24.dp))
 
             // ---- Permissions ---------------------------------------------
@@ -531,6 +578,9 @@ private fun SettingsScreen(
             }
             Spacer(Modifier.height(32.dp))
         }
+        }
+        }
+        }
     }
 }
 
@@ -577,7 +627,12 @@ private fun <T> ConnectedToggleRow(
 }
 
 @Composable
-private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
+private fun StatusCard(
+    state: WidgetState,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onRefresh: () -> Unit,
+) {
     // Tick once a second so the age readout is precise and live
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -642,6 +697,7 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
     val content by animateColorAsState(ui.content, motion.defaultEffectsSpec())
 
     Surface(
+        onClick = onToggle, // tap anywhere on the pill → full status detail
         shape = GroupTop,
         color = container,
         modifier = Modifier.fillMaxWidth(),
@@ -697,11 +753,11 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
                 )
             }
         }
-        // While refreshing, the card grows a live checklist: one row per
-        // engine stage (location → aircraft → route → media), each with its
-        // own done/running/pending/failed indicator.
+        // The checklist appears live while refreshing, and ON TAP at any
+        // time — showing the last refresh's per-stage outcome plus the
+        // schedule and error detail.
         AnimatedVisibility(
-            visible = state.refreshing && state.stages.isNotEmpty(),
+            visible = (state.refreshing || expanded) && state.stages.isNotEmpty(),
             enter = fadeIn(motion.defaultEffectsSpec()) +
                 expandVertically(motion.defaultSpatialSpec()),
             exit = fadeOut(motion.defaultEffectsSpec()) +
@@ -712,8 +768,81 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
                 Arrangement.spacedBy(10.dp),
             ) {
                 state.stages.forEach { stage -> StageRow(stage, content) }
+                if (expanded && !state.refreshing) {
+                    state.modeLabel?.let {
+                        StatusDetailRow("Schedule", it, content)
+                    }
+                    state.photoCredit?.let {
+                        StatusDetailRow("Photo", "© $it / Planespotters", content)
+                    }
+                    state.lastError?.takeIf { state.errorCount > 0 }?.let {
+                        StatusDetailRow("Last error", it, content)
+                    }
+                    StatusDetailRow(
+                        "Fresh until",
+                        if (state.staleAfterMs > 0)
+                            java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                                .format(java.util.Date(state.staleAfterMs))
+                        else "—",
+                        content,
+                    )
+                }
             }
         }
+        }
+    }
+}
+
+@Composable
+private fun StatusDetailRow(label: String, value: String, content: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = content.copy(alpha = 0.7f),
+            modifier = Modifier.width(86.dp),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = content,
+        )
+    }
+}
+
+/** Last-resort fix for a wedged widget: rebuild render sessions + engine. */
+@Composable
+private fun RestartRow(onRestart: () -> Unit) {
+    Surface(
+        onClick = onRestart,
+        shape = GroupBottom,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painterResource(R.drawable.ic_sync), null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Force full restart",
+                    style = MaterialTheme.typography.titleMediumEmphasized,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "If the widget ever sticks: rebuilds its render sessions and the engine.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward, null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -914,30 +1043,31 @@ private fun NetModeRow(
     }
 }
 
-/** Full-screen activity-log console, opened from the header icon. */
+/** The activity-log console as its own pushed page. */
 @Composable
-private fun LogDialog(
+private fun LogScreen(
     logEnabled: Boolean,
     onToggle: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val context = LocalContext.current
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(Modifier.padding(horizontal = 16.dp)) {
-                Spacer(Modifier.height(24.dp))
+        run {
+            Column(
+                Modifier
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FilledTonalIconButton(
-                        onClick = onDismiss,
+                        onClick = onBack,
                         shapes = IconButtonDefaults.shapes(),
                     ) {
-                        Icon(Icons.Filled.Close, "close")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "back")
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(

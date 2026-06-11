@@ -303,6 +303,33 @@ class UpdateService : Service() {
         private const val SLOW_INTERVAL_MS = 10L * 60 * 1000
         const val ACTION_TICK_NOW = "com.sam.airblock.TICK_NOW"
 
+        /**
+         * Nuclear option for a wedged widget: kill the engine, cancel the
+         * Glance render sessions (the part remove-and-re-add can leave
+         * wedged), clear stuck status flags, then bring everything back up.
+         */
+        suspend fun forceFullRestart(context: Context) {
+            Log.w(TAG, "FORCE FULL RESTART requested")
+            EventLog.append(context, "FORCE RESTART — engine + widget sessions rebuilt")
+            context.stopService(Intent(context, UpdateService::class.java))
+            val wm = androidx.work.WorkManager.getInstance(context)
+            AppWidgetManager.getInstance(context)
+                .getAppWidgetIds(ComponentName(context, AirblockWidgetReceiver::class.java))
+                .forEach { id ->
+                    // Glance's session worker runs under this unique name; a
+                    // permanently-wedged session is exactly what freezes the
+                    // widget while data keeps flowing underneath it
+                    wm.cancelUniqueWork("appWidget-$id")
+                }
+            WidgetStateStore.update(context) {
+                it.copy(refreshing = false, refreshStage = null, errorCount = 0)
+            }
+            delay(400)
+            AirblockWidget().updateAll(context) // recreates fresh sessions
+            KeepAliveWorker.schedule(context)
+            start(context, tickNow = true)
+        }
+
         /** Try to start the engine; false when Android denies a background FGS start. */
         fun start(context: Context, tickNow: Boolean = false): Boolean {
             val intent = Intent(context, UpdateService::class.java)

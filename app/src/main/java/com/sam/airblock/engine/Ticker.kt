@@ -6,6 +6,7 @@ import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
 import com.sam.airblock.data.AirlineLogoRepo
 import com.sam.airblock.data.EventLog
+import com.sam.airblock.data.ManufacturerLogoRepo
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PhotoRepo
 import com.sam.airblock.data.RouteResult
@@ -36,6 +37,7 @@ class Ticker(private val context: Context) {
     private val location = LocationProvider(context)
     private val photos = PhotoRepo(context)
     private val airlineLogos = AirlineLogoRepo(context)
+    private val manufacturerLogos = ManufacturerLogoRepo(context)
     private val gates = Gates(context)
     private val api = AdsbApi()
 
@@ -161,16 +163,20 @@ class Ticker(private val context: Context) {
             var leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
             var geo = legGeometry(leg, planeLat, planeLon, ac.gs)
 
+            val resolvedTypeName = ac.desc?.let { prettyType(it) }
+                ?: TypeNames.name(ac.t) ?: ac.t
+            val sameType = prev.typeName != null && prev.typeName == resolvedTypeName
+
             fun buildState(
                 photoPath: String?, photoCredit: String?, logoPath: String?,
+                mfrLogoPath: String?,
                 refreshing: Boolean,
             ) = WidgetState(
                 status = WidgetState.Status.OK,
                 callsign = callsign ?: ac.r ?: ac.hex.uppercase(),
                 // desc is often absent from /v2/closest — resolve the ICAO code
                 // to a full name offline, falling back to the raw code
-                typeName = ac.desc?.let { prettyType(it) }
-                    ?: TypeNames.name(ac.t) ?: ac.t,
+                typeName = resolvedTypeName,
                 typeCode = ac.t,
                 registration = ac.r,
                 hex = ac.hex,
@@ -196,6 +202,8 @@ class Ticker(private val context: Context) {
                 photoPath = photoPath,
                 photoCredit = photoCredit,
                 airlineLogoPath = logoPath,
+                airlineName = AirlineCodes.nameForCallsign(callsign),
+                manufacturerLogoPath = mfrLogoPath,
                 updatedAt = System.currentTimeMillis(),
                 refreshing = refreshing,
                 refreshStage = if (refreshing) "Loading route, photo & logo…" else null,
@@ -208,6 +216,7 @@ class Ticker(private val context: Context) {
                 photoPath = prev.photoPath.takeIf { sameAirframe },
                 photoCredit = prev.photoCredit.takeIf { sameAirframe },
                 logoPath = prev.airlineLogoPath.takeIf { sameAirline },
+                mfrLogoPath = prev.manufacturerLogoPath.takeIf { sameType },
                 refreshing = true,
             ))
 
@@ -244,6 +253,8 @@ class Ticker(private val context: Context) {
             val photoCredit = photo?.photographer ?: prev.photoCredit.takeIf { sameAirframe }
             val logoPath = airlineLogos.logoFor(callsign)?.absolutePath
                 ?: prev.airlineLogoPath.takeIf { sameAirline }
+            val mfrLogoPath = manufacturerLogos.logoFor(resolvedTypeName)?.absolutePath
+                ?: prev.manufacturerLogoPath.takeIf { sameType }
             setStage("media", WidgetState.Stage.DONE)
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
@@ -253,7 +264,8 @@ class Ticker(private val context: Context) {
                 "updated — ${callsign ?: ac.hex}" +
                     (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
 
-            publish(buildState(photoPath, photoCredit, logoPath, refreshing = false))
+            publish(buildState(photoPath, photoCredit, logoPath, mfrLogoPath,
+                refreshing = false))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

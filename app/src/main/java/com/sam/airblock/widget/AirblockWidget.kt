@@ -47,6 +47,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.sam.airblock.R
+import com.sam.airblock.data.ManufacturerLogoRepo
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.Units
@@ -70,8 +71,11 @@ class AirblockWidget : GlanceAppWidget() {
             val airlineLogo = remember(state.airlineLogoPath) {
                 state.airlineLogoPath?.let { BitmapFactory.decodeFile(it) }
             }
+            val manufacturerLogo = remember(state.manufacturerLogoPath) {
+                state.manufacturerLogoPath?.let { BitmapFactory.decodeFile(it) }
+            }
             GlanceTheme {
-                WidgetContent(state, photo, airlineLogo)
+                WidgetContent(state, photo, airlineLogo, manufacturerLogo)
             }
         }
     }
@@ -115,7 +119,12 @@ private fun widgetPalette(specialType: String?): WidgetPalette = when (specialTy
 }
 
 @Composable
-private fun WidgetContent(state: WidgetState, photo: Bitmap?, airlineLogo: Bitmap?) {
+private fun WidgetContent(
+    state: WidgetState,
+    photo: Bitmap?,
+    airlineLogo: Bitmap?,
+    manufacturerLogo: Bitmap?,
+) {
     // Non-standard aircraft (military, police helicopters…) get an
     // attention-grabbing tonal background — content colors must follow the
     // container role or dark-theme contrast breaks.
@@ -131,7 +140,8 @@ private fun WidgetContent(state: WidgetState, photo: Bitmap?, airlineLogo: Bitma
             .clickable(actionRunCallback<RefreshAction>()),
     ) {
         when (state.status) {
-            WidgetState.Status.OK -> AircraftCard(state, photo, airlineLogo, palette)
+            WidgetState.Status.OK ->
+                AircraftCard(state, photo, airlineLogo, manufacturerLogo, palette)
             WidgetState.Status.NO_AIRCRAFT -> EmptyMessage("No aircraft nearby")
             WidgetState.Status.NO_LOCATION -> EmptyMessage("Location unavailable — tap to retry")
             else -> EmptyMessage("Airblock — tap to refresh")
@@ -193,9 +203,12 @@ private fun AircraftCard(
     state: WidgetState,
     photo: Bitmap?,
     airlineLogo: Bitmap?,
+    manufacturerLogo: Bitmap?,
     palette: WidgetPalette,
 ) {
     val widgetSize = LocalSize.current
+    val context = LocalContext.current
+    val density = context.resources.displayMetrics.density
     // Photo sizing FROM WIDTH ONLY. Launchers (Niagara et al.) misreport the
     // widget's height bucket — deriving the photo from height is what made it
     // render as a narrow cropped strip (v2.2) or a tiny thumbnail (later).
@@ -242,14 +255,23 @@ private fun AircraftCard(
             Spacer(GlanceModifier.width(12.dp))
             Column(modifier = GlanceModifier.defaultWeight()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = state.callsign ?: "—",
-                        style = TextStyle(
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = palette.onBg,
-                        ),
-                        maxLines = 1,
+                    // The callsign in real M3 Expressive display type: drawn
+                    // as a bitmap because RemoteViews text can't reach the
+                    // heavy, tight expressive weights
+                    val callsignText = state.callsign ?: "—"
+                    val callsignColor = palette.onBg.getColor(context).toArgb()
+                    val maxCallsignWidthPx =
+                        ((widgetSize.width.value * 0.62f - 24f) * density).toInt()
+                    val callsignBmp = remember(callsignText, callsignColor, maxCallsignWidthPx) {
+                        expressiveText(callsignText, callsignColor,
+                            heightPx = (28 * density).toInt(), maxWidthPx = maxCallsignWidthPx)
+                    }
+                    Image(
+                        provider = ImageProvider(callsignBmp),
+                        contentDescription = callsignText,
+                        modifier = GlanceModifier
+                            .width((callsignBmp.width / density).dp)
+                            .height((callsignBmp.height / density).dp),
                     )
                     // Non-standard aircraft badge next to the name
                     state.specialType?.let { special ->
@@ -278,11 +300,50 @@ private fun AircraftCard(
                         }
                     }
                 }
-                state.typeName?.let {
+                // Type line: manufacturer WORDMARK (tinted to theme) + model,
+                // falling back to the full text when no logo is cached
+                state.typeName?.let { typeName ->
+                    val mfr = manufacturerLogo?.let {
+                        ManufacturerLogoRepo.manufacturerOf(typeName)?.let { name ->
+                            name to ManufacturerLogoRepo.modelOf(typeName, name)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (manufacturerLogo != null && mfr != null) {
+                            val (mfrName, model) = mfr
+                            val logoH = 11f
+                            val logoW = (logoH * manufacturerLogo.width /
+                                manufacturerLogo.height).coerceAtMost(64f)
+                            Image(
+                                provider = ImageProvider(manufacturerLogo),
+                                contentDescription = mfrName,
+                                colorFilter = ColorFilter.tint(palette.onBgVariant),
+                                modifier = GlanceModifier.width(logoW.dp).height(logoH.dp),
+                            )
+                            if (model.isNotEmpty()) {
+                                Spacer(GlanceModifier.width(5.dp))
+                                Text(
+                                    text = model,
+                                    style = TextStyle(fontSize = 12.sp,
+                                        color = palette.onBgVariant),
+                                    maxLines = 1,
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = typeName,
+                                style = TextStyle(fontSize = 12.sp,
+                                    color = palette.onBgVariant),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+                // The operating airline, quietly under the type
+                state.airlineName?.let { airline ->
                     Text(
-                        text = it,
-                        style = TextStyle(fontSize = 12.sp,
-                            color = palette.onBgVariant),
+                        text = airline,
+                        style = TextStyle(fontSize = 10.sp, color = palette.onBgVariant),
                         maxLines = 1,
                     )
                 }
@@ -608,6 +669,31 @@ private fun EmptyMessage(message: String) {
             )
         }
     }
+}
+
+/**
+ * Text in heavy expressive display type, rendered as a bitmap — RemoteViews
+ * text can't reach the tight, black weights M3 Expressive headlines use.
+ * Returns a bitmap trimmed to the text bounds; scales down to [maxWidthPx].
+ */
+private fun expressiveText(text: String, color: Int, heightPx: Int, maxWidthPx: Int): Bitmap {
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        this.color = color
+        typeface = android.graphics.Typeface.create(
+            "sans-serif-black", android.graphics.Typeface.BOLD)
+        textSize = heightPx * 0.82f
+        letterSpacing = -0.02f // expressive headlines run tight
+    }
+    var w = paint.measureText(text)
+    if (maxWidthPx > 0 && w > maxWidthPx) {
+        paint.textSize *= maxWidthPx / w
+        w = paint.measureText(text)
+    }
+    val fm = paint.fontMetrics
+    val h = (fm.descent - fm.ascent).toInt().coerceAtLeast(1)
+    val bmp = Bitmap.createBitmap(w.toInt().coerceAtLeast(1), h, Bitmap.Config.ARGB_8888)
+    Canvas(bmp).drawText(text, 0f, -fm.ascent, paint)
+    return bmp
 }
 
 /** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */

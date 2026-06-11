@@ -27,6 +27,66 @@ object AirlineCodes {
     fun iataForCallsign(callsign: String?): String? =
         icaoPrefix(callsign)?.let { iataFor(it) }
 
+    /** Display name of the airline flying [callsign], or null when unknown. */
+    fun nameForCallsign(callsign: String?): String? =
+        iataForCallsign(callsign)?.let { IATA_TO_NAME[it] }
+
+    private val IATA_TO_NAME: Map<String, String> = mapOf(
+        "BA" to "British Airways", "CJ" to "BA CityFlyer", "VS" to "Virgin Atlantic",
+        "U2" to "easyJet", "LS" to "Jet2", "BY" to "TUI Airways",
+        "EI" to "Aer Lingus", "FR" to "Ryanair", "LM" to "Loganair",
+        "LH" to "Lufthansa", "CL" to "Lufthansa CityLine", "EW" to "Eurowings",
+        "LX" to "Swiss", "WK" to "Edelweiss", "OS" to "Austrian",
+        "SN" to "Brussels Airlines", "KL" to "KLM", "HV" to "Transavia",
+        "OR" to "TUI fly", "MP" to "Martinair", "AF" to "Air France",
+        "A5" to "HOP!", "TO" to "Transavia France", "DE" to "Condor",
+        "X3" to "TUIfly", "TB" to "TUI fly Belgium", "IB" to "Iberia",
+        "I2" to "Iberia Express", "VY" to "Vueling", "UX" to "Air Europa",
+        "TP" to "TAP Air Portugal", "AZ" to "ITA Airways", "V7" to "Volotea",
+        "LG" to "Luxair", "KM" to "Air Malta",
+        "SK" to "SAS", "DY" to "Norwegian", "AY" to "Finnair",
+        "FI" to "Icelandair", "OG" to "Play", "WF" to "Widerøe", "BT" to "airBaltic",
+        "LO" to "LOT", "W6" to "Wizz Air", "OK" to "Czech Airlines",
+        "QS" to "Smartwings", "A3" to "Aegean", "OA" to "Olympic Air",
+        "OU" to "Croatia Airlines", "JU" to "Air Serbia", "TK" to "Turkish Airlines",
+        "PC" to "Pegasus", "XQ" to "SunExpress", "SU" to "Aeroflot",
+        "S7" to "S7 Airlines", "U6" to "Ural Airlines",
+        "EK" to "Emirates", "EY" to "Etihad", "QR" to "Qatar Airways",
+        "GF" to "Gulf Air", "KU" to "Kuwait Airways", "SV" to "Saudia",
+        "FZ" to "flydubai", "G9" to "Air Arabia", "RJ" to "Royal Jordanian",
+        "ME" to "MEA", "WY" to "Oman Air", "LY" to "El Al",
+        "MS" to "EgyptAir", "AT" to "Royal Air Maroc", "AH" to "Air Algérie",
+        "TU" to "Tunisair", "ET" to "Ethiopian", "KQ" to "Kenya Airways",
+        "SA" to "South African", "WB" to "RwandAir",
+        "AA" to "American", "DL" to "Delta", "UA" to "United",
+        "WN" to "Southwest", "B6" to "JetBlue", "AS" to "Alaska",
+        "NK" to "Spirit", "F9" to "Frontier", "G4" to "Allegiant",
+        "HA" to "Hawaiian", "SY" to "Sun Country", "OO" to "SkyWest",
+        "YX" to "Republic", "9E" to "Endeavor", "MQ" to "Envoy",
+        "YV" to "Mesa", "QX" to "Horizon", "FX" to "FedEx", "5X" to "UPS",
+        "5Y" to "Atlas Air", "AC" to "Air Canada", "WS" to "WestJet",
+        "TS" to "Air Transat", "PD" to "Porter", "F8" to "Flair",
+        "AM" to "Aeroméxico", "Y4" to "Volaris", "VB" to "Viva Aerobus",
+        "SQ" to "Singapore Airlines", "TR" to "Scoot", "MH" to "Malaysia Airlines",
+        "AK" to "AirAsia", "D7" to "AirAsia X", "TG" to "Thai Airways",
+        "GA" to "Garuda", "CX" to "Cathay Pacific", "MU" to "China Eastern",
+        "CA" to "Air China", "CZ" to "China Southern", "HU" to "Hainan",
+        "MF" to "XiamenAir", "ZH" to "Shenzhen Airlines", "9C" to "Spring Airlines",
+        "HO" to "Juneyao Air", "SC" to "Shandong Airlines", "BR" to "EVA Air",
+        "CI" to "China Airlines", "JL" to "JAL", "NH" to "ANA",
+        "MM" to "Peach", "GK" to "Jetstar Japan", "KE" to "Korean Air",
+        "OZ" to "Asiana", "LJ" to "Jin Air", "7C" to "Jeju Air",
+        "TW" to "T'way", "VN" to "Vietnam Airlines", "VJ" to "VietJet",
+        "PR" to "Philippine Airlines", "5J" to "Cebu Pacific",
+        "AI" to "Air India", "6E" to "IndiGo", "SG" to "SpiceJet",
+        "UK" to "Vistara", "IX" to "Air India Express", "PK" to "PIA",
+        "BG" to "Biman", "UL" to "SriLankan", "QF" to "Qantas",
+        "JQ" to "Jetstar", "VA" to "Virgin Australia", "NZ" to "Air New Zealand",
+        "ZL" to "Rex", "LA" to "LATAM", "G3" to "GOL", "AD" to "Azul",
+        "AV" to "Avianca", "CM" to "Copa", "AR" to "Aerolíneas Argentinas",
+        "CV" to "Cargolux", "3S" to "AeroLogic", "RU" to "AirBridgeCargo",
+    )
+
     private val ICAO_TO_IATA: Map<String, String> = mapOf(
         // --- UK & Ireland ---
         "BAW" to "BA", "SHT" to "BA", "CFE" to "CJ", "VIR" to "VS",
