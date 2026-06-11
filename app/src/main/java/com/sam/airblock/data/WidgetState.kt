@@ -51,6 +51,12 @@ data class WidgetState(
      * redraw three times per tick for text it doesn't display.
      */
     val refreshStage: String? = null,
+    /**
+     * Per-step progress of the current refresh (location → aircraft → route →
+     * media), driving the expanded checklist in the in-app status card.
+     * Like [refreshStage], deliberately NOT part of renderKey.
+     */
+    val stages: List<Stage> = emptyList(),
     val pausedReason: String? = null,  // e.g. "battery saver"
     val errorCount: Int = 0,           // consecutive failed refreshes
     val lastError: String? = null,     // human-readable cause of the last failure
@@ -60,6 +66,21 @@ data class WidgetState(
     val modeLabel: String? = null,
 ) {
     enum class Status { OK, NO_AIRCRAFT, NO_LOCATION, NO_DATA, ERROR }
+
+    /** One step of a refresh, as shown in the status card's checklist. */
+    @Serializable
+    data class Stage(
+        val key: String,   // "location" | "aircraft" | "route" | "media"
+        val label: String, // "Location", "Nearest aircraft", …
+        val state: String, // PENDING | RUNNING | DONE | FAILED
+    ) {
+        companion object {
+            const val PENDING = "pending"
+            const val RUNNING = "running"
+            const val DONE = "done"
+            const val FAILED = "failed"
+        }
+    }
 
     /** Render-relevant identity — used to skip widget redraws when nothing changed. */
     fun renderKey(): String = listOf(

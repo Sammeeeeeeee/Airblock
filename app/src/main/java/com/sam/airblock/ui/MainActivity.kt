@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -645,10 +646,9 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
         color = container,
         modifier = Modifier.fillMaxWidth(),
     ) {
+        Column(Modifier.animateContentSize(motion.defaultSpatialSpec())) {
         Row(
-            Modifier
-                .padding(16.dp)
-                .animateContentSize(motion.defaultSpatialSpec()),
+            Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // While the engine works, the icon hands over to the expressive
@@ -696,6 +696,69 @@ private fun StatusCard(state: WidgetState, onRefresh: () -> Unit) {
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+        // While refreshing, the card grows a live checklist: one row per
+        // engine stage (location → aircraft → route → media), each with its
+        // own done/running/pending/failed indicator.
+        AnimatedVisibility(
+            visible = state.refreshing && state.stages.isNotEmpty(),
+            enter = fadeIn(motion.defaultEffectsSpec()) +
+                expandVertically(motion.defaultSpatialSpec()),
+            exit = fadeOut(motion.defaultEffectsSpec()) +
+                shrinkVertically(motion.defaultSpatialSpec()),
+        ) {
+            Column(
+                Modifier.padding(start = 22.dp, end = 16.dp, bottom = 16.dp),
+                Arrangement.spacedBy(10.dp),
+            ) {
+                state.stages.forEach { stage -> StageRow(stage, content) }
+            }
+        }
+        }
+    }
+}
+
+/** One row of the refresh checklist inside the status card. */
+@Composable
+private fun StageRow(stage: WidgetState.Stage, content: Color) {
+    val pending = stage.state == WidgetState.Stage.PENDING
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            when (stage.state) {
+                WidgetState.Stage.RUNNING -> LoadingIndicator(
+                    color = content,
+                    modifier = Modifier.size(24.dp),
+                )
+                WidgetState.Stage.DONE -> Icon(
+                    Icons.Filled.Check, "done",
+                    tint = content,
+                    modifier = Modifier.size(18.dp),
+                )
+                WidgetState.Stage.FAILED -> Icon(
+                    painterResource(R.drawable.ic_warning), "failed",
+                    tint = content,
+                    modifier = Modifier.size(16.dp),
+                )
+                else -> Box(
+                    Modifier
+                        .size(7.dp)
+                        .background(content.copy(alpha = 0.35f), CircleShape)
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            stage.label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (pending) content.copy(alpha = 0.55f) else content,
+        )
+        if (stage.state == WidgetState.Stage.FAILED) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "failed",
+                style = MaterialTheme.typography.labelSmall,
+                color = content.copy(alpha = 0.7f),
+            )
         }
     }
 }
