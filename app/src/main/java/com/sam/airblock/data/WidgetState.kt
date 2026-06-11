@@ -46,6 +46,8 @@ data class WidgetState(
     val airlineName: String? = null,
     /** Cached manufacturer-wordmark PNG (BOEING, AIRBUS…), when known. */
     val manufacturerLogoPath: String? = null,
+    /** Cached model-specific logo (A380, 787 Dreamliner…), when the model has one. */
+    val modelLogoPath: String? = null,
     val updatedAt: Long = 0L,
     // Non-standard conditions surfaced as a top-right status icon on the widget
     val refreshing: Boolean = false,
@@ -92,7 +94,7 @@ data class WidgetState(
         mach?.let { "%.2f".format(it) },
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
-        manufacturerLogoPath,
+        manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
         specialType, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,

@@ -22,17 +22,34 @@ class ManufacturerLogoRepo(context: Context) {
     /** Cached wordmark for [typeName]'s manufacturer, or null. */
     fun logoFor(typeName: String?): File? {
         val mfr = manufacturerOf(typeName) ?: return null
-        val key = mfr.lowercase().replace(" ", "_")
+        return cachedOrFetch(
+            key = mfr.lowercase().replace(" ", "_"),
+            fileName = FILES.getValue(mfr),
+        )
+    }
+
+    /**
+     * The plane's OWN logo (the stylized A380 / 787 Dreamliner / 737 MAX
+     * wordmarks) for an ICAO type code, or null when the model has none.
+     */
+    fun logoForModel(typeCode: String?): File? {
+        val fileName = MODEL_FILES[typeCode?.trim()?.uppercase()] ?: return null
+        return cachedOrFetch(
+            key = "model_" + fileName.substringBeforeLast('.')
+                .lowercase().replace(Regex("\\W"), "_"),
+            fileName = fileName,
+        )
+    }
+
+    private fun cachedOrFetch(key: String, fileName: String): File? {
         val img = File(dir, "$key.png")
         val miss = File(dir, "$key.none")
-
         if (img.exists()) return img
         if (miss.exists() && System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS) return null
-
         return try {
-            fetch(FILES.getValue(mfr), img, miss)
+            fetch(fileName, img, miss)
         } catch (_: IOException) {
-            null // network blip — retried next time this manufacturer flies over
+            null // network blip — retried next time this aircraft flies over
         }
     }
 
@@ -67,6 +84,31 @@ class ManufacturerLogoRepo(context: Context) {
         /** "Airbus A321neo" → "A321neo" (the part the wordmark doesn't say). */
         fun modelOf(typeName: String, manufacturer: String): String =
             typeName.substring(manufacturer.length).trim()
+
+        /**
+         * ICAO type code → the model's own logo on Wikimedia Commons
+         * (verified against Category:Logos_of_Airbus_aircraft and
+         * Category:Logos_of_Boeing; all have transparent backgrounds).
+         */
+        private val MODEL_FILES: Map<String, String> = buildMap {
+            put("A388", "Logo_Airbus_A380.svg")
+            put("BCS1", "Logo_Airbus_A220.svg"); put("BCS3", "Logo_Airbus_A220.svg")
+            put("A318", "Logo_Airbus_A318.svg")
+            put("A320", "Logo_Airbus_A320.svg")
+            put("A20N", "Logo_Airbus_A320neo.svg"); put("A19N", "Logo_Airbus_A320neo.svg")
+            put("A321", "Logo_Airbus_A321.svg"); put("A21N", "Logo_Airbus_A321.svg")
+            put("A332", "Logo_Airbus_A330.svg"); put("A333", "Logo_Airbus_A330.svg")
+            put("A338", "Logo_Airbus_A330neo.svg"); put("A339", "Logo_Airbus_A330neo.svg")
+            listOf("A342", "A343", "A345", "A346").forEach { put(it, "Logo_Airbus_A340.svg") }
+            put("A359", "Logo_Airbus_A350.svg"); put("A35K", "Logo_Airbus_A350.svg")
+            listOf("B772", "B773", "B77L", "B77W", "B778", "B779")
+                .forEach { put(it, "Boeing_777_logo.svg") }
+            listOf("B788", "B789", "B78X")
+                .forEach { put(it, "Boeing_787_Dreamliner_logo.png") }
+            listOf("B37M", "B38M", "B39M", "B3XM")
+                .forEach { put(it, "737_MAX_logo.png") }
+            put("B712", "B717.svg")
+        }
 
         /** Manufacturer display prefix → verified Wikimedia Commons filename. */
         private val FILES = mapOf(

@@ -19,6 +19,7 @@ import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
 import com.sam.airblock.util.Units
 import com.sam.airblock.widget.AirblockWidget
+import kotlinx.coroutines.launch
 import java.io.IOException
 
 /**
@@ -48,7 +49,7 @@ class Ticker(private val context: Context) {
         private set
 
     /** Mutable per-tick checklist, persisted on every transition. */
-    private val stageOrder = listOf("location", "aircraft", "route", "media")
+    private val stageOrder = listOf("location", "aircraft", "route", "photo", "logos")
     private var stages = linkedMapOf<String, WidgetState.Stage>()
 
     private fun resetStages() {
@@ -56,7 +57,8 @@ class Ticker(private val context: Context) {
             "location" to WidgetState.Stage("location", "Location", WidgetState.Stage.PENDING),
             "aircraft" to WidgetState.Stage("aircraft", "Nearest aircraft", WidgetState.Stage.PENDING),
             "route" to WidgetState.Stage("route", "Route", WidgetState.Stage.PENDING),
-            "media" to WidgetState.Stage("media", "Photo & airline logo", WidgetState.Stage.PENDING),
+            "photo" to WidgetState.Stage("photo", "Photo", WidgetState.Stage.PENDING),
+            "logos" to WidgetState.Stage("logos", "Logos", WidgetState.Stage.PENDING),
         )
     }
 
@@ -219,53 +221,92 @@ class Ticker(private val context: Context) {
                 mfrLogoPath = prev.manufacturerLogoPath.takeIf { sameType },
                 refreshing = true,
             ))
+            if (sameType && prev.modelLogoPath != null) {
+                updateAndRender { it.copy(modelLogoPath = prev.modelLogoPath) }
+            }
 
-            // ---- Phase 2: route + media enrichment ------------------------
-            when {
-                callsign == null ->
-                    setStage("route", WidgetState.Stage.DONE, label = "Route (no callsign)")
-                routeCached ->
-                    setStage("route", WidgetState.Stage.DONE, label = "Route (cached)")
-                else -> {
-                    setStage("route", WidgetState.Stage.RUNNING)
-                    try {
-                        // Cache only definitive answers (incl. a genuine 404 -> null);
-                        // transient failures must retry on the next tick
-                        route = api.route(callsign).also {
-                            cachedRoute = callsign to it
-                            if (it == null) Log.d(TAG, "route: none recorded for $callsign")
+            // ---- Phase 2: route, photo and logos IN PARALLEL ---------------
+            // Each result lands on the widget the moment it arrives — no
+            // result waits behind a slower sibling.
+            kotlinx.coroutines.coroutineScope {
+                launch {
+                    when {
+                        callsign == null -> setStage("route", WidgetState.Stage.DONE,
+                            label = "Route (no callsign)")
+                        routeCached -> setStage("route", WidgetState.Stage.DONE,
+                            label = "Route (cached)")
+                        else -> {
+                            setStage("route", WidgetState.Stage.RUNNING)
+                            try {
+                                // Cache only definitive answers (incl. a genuine
+                                // 404 -> null); transient failures retry next tick
+                                route = api.route(callsign).also {
+                                    cachedRoute = callsign to it
+                                    if (it == null) Log.d(TAG, "route: none recorded for $callsign")
+                                }
+                                leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
+                                geo = legGeometry(leg, planeLat, planeLon, ac.gs)
+                                val l = leg
+                                val g = geo
+                                updateAndRender { st ->
+                                    st.copy(
+                                        originIata = l?.first?.iata ?: st.originIata,
+                                        originCity = l?.first?.location ?: st.originCity,
+                                        originFlag = l?.first?.let { Units.flagEmoji(it.countryIso2) }
+                                            ?: st.originFlag,
+                                        destIata = l?.second?.iata ?: st.destIata,
+                                        destCity = l?.second?.location ?: st.destCity,
+                                        destFlag = l?.second?.let { Units.flagEmoji(it.countryIso2) }
+                                            ?: st.destFlag,
+                                        routeProgress = g.progress ?: st.routeProgress,
+                                        etaEpochMs = g.etaEpochMs ?: st.etaEpochMs,
+                                    )
+                                }
+                                setStage("route", WidgetState.Stage.DONE)
+                            } catch (e: IOException) {
+                                Log.w(TAG, "route lookup failed for $callsign: $e")
+                                setStage("route", WidgetState.Stage.FAILED)
+                            }
                         }
-                        leg = pickLeg(route?.airports.orEmpty(), planeLat, planeLon)
-                        geo = legGeometry(leg, planeLat, planeLon, ac.gs)
-                        setStage("route", WidgetState.Stage.DONE)
-                    } catch (e: IOException) {
-                        Log.w(TAG, "route lookup failed for $callsign: $e")
-                        setStage("route", WidgetState.Stage.FAILED)
                     }
+                }
+                launch {
+                    setStage("photo", WidgetState.Stage.RUNNING)
+                    val photo = photos.photoFor(ac.hex)
+                    if (photo != null) {
+                        updateAndRender {
+                            it.copy(photoPath = photo.file.absolutePath,
+                                photoCredit = photo.photographer)
+                        }
+                    }
+                    setStage("photo", WidgetState.Stage.DONE)
+                }
+                launch {
+                    setStage("logos", WidgetState.Stage.RUNNING)
+                    val logoPath = airlineLogos.logoFor(callsign)?.absolutePath
+                    val mfrLogoPath = manufacturerLogos.logoFor(resolvedTypeName)?.absolutePath
+                    val modelLogoPath = manufacturerLogos.logoForModel(ac.t)?.absolutePath
+                    updateAndRender {
+                        it.copy(
+                            airlineLogoPath = logoPath ?: it.airlineLogoPath,
+                            manufacturerLogoPath = mfrLogoPath ?: it.manufacturerLogoPath,
+                            modelLogoPath = modelLogoPath ?: it.modelLogoPath,
+                        )
+                    }
+                    setStage("logos", WidgetState.Stage.DONE)
                 }
             }
 
-            setStage("media", WidgetState.Stage.RUNNING)
-            // Disk-cached per hex/airline — instant for anything already seen;
-            // the previous tick's media stays as fallback when a fetch fails
-            val photo = photos.photoFor(ac.hex)
-            val photoPath = photo?.file?.absolutePath ?: prev.photoPath.takeIf { sameAirframe }
-            val photoCredit = photo?.photographer ?: prev.photoCredit.takeIf { sameAirframe }
-            val logoPath = airlineLogos.logoFor(callsign)?.absolutePath
-                ?: prev.airlineLogoPath.takeIf { sameAirline }
-            val mfrLogoPath = manufacturerLogos.logoFor(resolvedTypeName)?.absolutePath
-                ?: prev.manufacturerLogoPath.takeIf { sameType }
-            setStage("media", WidgetState.Stage.DONE)
-
-            Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s photo=%s".format(
+            Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s".format(
                 fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
-                route?.airportCodes ?: "?", photoPath != null))
+                route?.airportCodes ?: "?"))
             if (log) EventLog.append(context,
                 "updated — ${callsign ?: ac.hex}" +
                     (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
 
-            publish(buildState(photoPath, photoCredit, logoPath, mfrLogoPath,
-                refreshing = false))
+            updateAndRender {
+                it.copy(refreshing = false, refreshStage = null, stages = stageList())
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -353,6 +394,14 @@ class Ticker(private val context: Context) {
         // Atomic swap — concurrent writers (worker, tap) can't interleave
         val (previous, next) = WidgetStateStore.update(context) { state }
         // Skip the RemoteViews churn when nothing the user can see has changed
+        if (previous.renderKey() != next.renderKey()) {
+            AirblockWidget().updateAll(context)
+        }
+    }
+
+    /** Incremental enrichment: merge into current state, render if visible. */
+    private suspend fun updateAndRender(transform: (WidgetState) -> WidgetState) {
+        val (previous, next) = WidgetStateStore.update(context, transform)
         if (previous.renderKey() != next.renderKey()) {
             AirblockWidget().updateAll(context)
         }

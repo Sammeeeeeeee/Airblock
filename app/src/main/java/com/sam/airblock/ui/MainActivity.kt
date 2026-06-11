@@ -81,6 +81,8 @@ import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.toShape
@@ -305,10 +307,21 @@ private fun SettingsScreen(
             )
         } else {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        val ptrState = rememberPullToRefreshState()
         PullToRefreshBox(
             isRefreshing = widgetState.refreshing,
             onRefresh = ::refreshNow,
+            state = ptrState,
             modifier = Modifier.fillMaxSize(),
+            indicator = {
+                // The M3 Expressive shape-morphing pull indicator, not the
+                // legacy circular arrow
+                PullToRefreshDefaults.LoadingIndicator(
+                    state = ptrState,
+                    isRefreshing = widgetState.refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            },
         ) {
         Column(
             modifier = Modifier
@@ -445,49 +458,49 @@ private fun SettingsScreen(
             )
             Spacer(Modifier.height(GroupGap))
             NetworkCard(widgetState, intervalSec, wifiMode, dataMode)
-            Spacer(Modifier.height(GroupGap))
-            RestartRow {
-                scope.launch { UpdateService.forceFullRestart(context) }
-            }
             Spacer(Modifier.height(24.dp))
 
-            // ---- Permissions ---------------------------------------------
-            SectionLabel(
-                "Setup",
-                Modifier.onGloballyPositioned {
-                    setupSectionY = it.positionInParent().y.roundToInt()
-                },
-            )
-            PermissionRow(
-                icon = Icons.Filled.LocationOn,
-                title = "Precise location",
-                rationale = "Finds the aircraft nearest to you. Airblock only reads the " +
-                    "phone's already-cached fix — no GPS battery drain.",
-                granted = perms.fine,
-                shape = GroupTop,
-                onClick = onGrantLocation,
-            )
-            Spacer(Modifier.height(GroupGap))
-            PermissionRow(
-                icon = Icons.Filled.Settings,
-                title = "Location all the time",
-                rationale = "Lets the widget refresh while the app is closed. In App info " +
-                    "→ Permissions → Location, choose “Allow all the time”.",
-                granted = perms.background,
-                shape = GroupMiddle,
-                onClick = onGrantBackground,
-            )
-            Spacer(Modifier.height(GroupGap))
-            PermissionRow(
-                icon = Icons.Filled.Info,
-                title = "Usage access",
-                rationale = "Pauses refreshes whenever your home screen isn't visible — " +
-                    "this is what keeps Airblock's battery use near zero.",
-                granted = perms.usage,
-                shape = GroupBottom,
-                onClick = onGrantUsage,
-            )
-            Spacer(Modifier.height(24.dp))
+            // ---- Permissions: front and centre until granted, then parked
+            // below Tuning once setup is done -------------------------------
+            val setupSection: @Composable () -> Unit = {
+                SectionLabel(
+                    "Setup",
+                    Modifier.onGloballyPositioned {
+                        setupSectionY = it.positionInParent().y.roundToInt()
+                    },
+                )
+                PermissionRow(
+                    icon = Icons.Filled.LocationOn,
+                    title = "Precise location",
+                    rationale = "Finds the aircraft nearest to you. Airblock only reads the " +
+                        "phone's already-cached fix — no GPS battery drain.",
+                    granted = perms.fine,
+                    shape = GroupTop,
+                    onClick = onGrantLocation,
+                )
+                Spacer(Modifier.height(GroupGap))
+                PermissionRow(
+                    icon = Icons.Filled.Settings,
+                    title = "Location all the time",
+                    rationale = "Lets the widget refresh while the app is closed. In App info " +
+                        "→ Permissions → Location, choose “Allow all the time”.",
+                    granted = perms.background,
+                    shape = GroupMiddle,
+                    onClick = onGrantBackground,
+                )
+                Spacer(Modifier.height(GroupGap))
+                PermissionRow(
+                    icon = Icons.Filled.Info,
+                    title = "Usage access",
+                    rationale = "Pauses refreshes whenever your home screen isn't visible — " +
+                        "this is what keeps Airblock's battery use near zero.",
+                    granted = perms.usage,
+                    shape = GroupBottom,
+                    onClick = onGrantUsage,
+                )
+                Spacer(Modifier.height(24.dp))
+            }
+            if (!perms.allGranted) setupSection()
 
             // ---- Tuning ---------------------------------------------------
             SectionLabel("Tuning")
@@ -560,6 +573,8 @@ private fun SettingsScreen(
             }
             Spacer(Modifier.height(24.dp))
 
+            if (perms.allGranted) setupSection()
+
             // ---- Attribution ----------------------------------------------
             SectionLabel("Data & photos")
             Surface(
@@ -575,6 +590,14 @@ private fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(20.dp),
                 )
+            }
+            Spacer(Modifier.height(24.dp))
+
+            // ---- Troubleshooting: deliberately last — a recovery tool,
+            // not part of everyday use -------------------------------------
+            SectionLabel("Troubleshooting")
+            RestartRow {
+                scope.launch { UpdateService.forceFullRestart(context) }
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -815,7 +838,7 @@ private fun StatusDetailRow(label: String, value: String, content: Color) {
 private fun RestartRow(onRestart: () -> Unit) {
     Surface(
         onClick = onRestart,
-        shape = GroupBottom,
+        shape = GroupSingle,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {

@@ -25,6 +25,7 @@ import androidx.glance.appwidget.CircularProgressIndicator
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -74,8 +75,11 @@ class AirblockWidget : GlanceAppWidget() {
             val manufacturerLogo = remember(state.manufacturerLogoPath) {
                 state.manufacturerLogoPath?.let { BitmapFactory.decodeFile(it) }
             }
+            val modelLogo = remember(state.modelLogoPath) {
+                state.modelLogoPath?.let { BitmapFactory.decodeFile(it) }
+            }
             GlanceTheme {
-                WidgetContent(state, photo, airlineLogo, manufacturerLogo)
+                WidgetContent(state, photo, airlineLogo, manufacturerLogo, modelLogo)
             }
         }
     }
@@ -124,6 +128,7 @@ private fun WidgetContent(
     photo: Bitmap?,
     airlineLogo: Bitmap?,
     manufacturerLogo: Bitmap?,
+    modelLogo: Bitmap?,
 ) {
     // Non-standard aircraft (military, police helicopters…) get an
     // attention-grabbing tonal background — content colors must follow the
@@ -137,11 +142,13 @@ private fun WidgetContent(
             // Match the corner radius the launcher clips widgets to
             .cornerRadius(android.R.dimen.system_app_widget_background_radius)
             .padding(10.dp)
-            .clickable(actionRunCallback<RefreshAction>()),
+            // Tapping the widget opens the app (which kicks a refresh on open)
+            .clickable(
+                androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
     ) {
         when (state.status) {
             WidgetState.Status.OK ->
-                AircraftCard(state, photo, airlineLogo, manufacturerLogo, palette)
+                AircraftCard(state, photo, airlineLogo, manufacturerLogo, modelLogo, palette)
             WidgetState.Status.NO_AIRCRAFT -> EmptyMessage("No aircraft nearby")
             WidgetState.Status.NO_LOCATION -> EmptyMessage("Location unavailable — tap to retry")
             else -> EmptyMessage("Airblock — tap to refresh")
@@ -204,6 +211,7 @@ private fun AircraftCard(
     photo: Bitmap?,
     airlineLogo: Bitmap?,
     manufacturerLogo: Bitmap?,
+    modelLogo: Bitmap?,
     palette: WidgetPalette,
 ) {
     val widgetSize = LocalSize.current
@@ -213,7 +221,7 @@ private fun AircraftCard(
     // widget's height bucket — deriving the photo from height is what made it
     // render as a narrow cropped strip (v2.2) or a tiny thumbnail (later).
     // Width is the one dimension launchers report reliably.
-    val photoWidth = widgetSize.width * 0.36f
+    val photoWidth = widgetSize.width * 0.42f
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -266,12 +274,24 @@ private fun AircraftCard(
                         expressiveText(callsignText, callsignColor,
                             heightPx = (28 * density).toInt(), maxWidthPx = maxCallsignWidthPx)
                     }
+                    // Tapping the callsign opens this flight in Flightradar24
+                    // (or the browser when the app isn't installed)
                     Image(
                         provider = ImageProvider(callsignBmp),
                         contentDescription = callsignText,
                         modifier = GlanceModifier
                             .width((callsignBmp.width / density).dp)
-                            .height((callsignBmp.height / density).dp),
+                            .height((callsignBmp.height / density).dp)
+                            .clickable(
+                                actionStartActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(
+                                            "https://www.flightradar24.com/" +
+                                                callsignText.replace(" ", "")),
+                                    )
+                                )
+                            ),
                     )
                     // Non-standard aircraft badge next to the name
                     state.specialType?.let { special ->
@@ -320,7 +340,19 @@ private fun AircraftCard(
                                 colorFilter = ColorFilter.tint(palette.onBgVariant),
                                 modifier = GlanceModifier.width(logoW.dp).height(logoH.dp),
                             )
-                            if (model.isNotEmpty()) {
+                            if (modelLogo != null) {
+                                // The plane's OWN logo (A380, 787 Dreamliner…)
+                                Spacer(GlanceModifier.width(6.dp))
+                                val mLogoH = 13f
+                                val mLogoW = (mLogoH * modelLogo.width /
+                                    modelLogo.height).coerceAtMost(72f)
+                                Image(
+                                    provider = ImageProvider(modelLogo),
+                                    contentDescription = model,
+                                    colorFilter = ColorFilter.tint(palette.onBgVariant),
+                                    modifier = GlanceModifier.width(mLogoW.dp).height(mLogoH.dp),
+                                )
+                            } else if (model.isNotEmpty()) {
                                 Spacer(GlanceModifier.width(5.dp))
                                 Text(
                                     text = model,
