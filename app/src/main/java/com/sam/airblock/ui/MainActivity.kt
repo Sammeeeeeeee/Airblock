@@ -242,7 +242,9 @@ private fun SettingsScreen(
         loaded = true
     }
 
-    fun save() {
+    // tickNow only when the change makes refreshes FASTER (or changes the
+    // data, like radius) — slowing down must not trigger a pointless fetch
+    fun save(tickNow: Boolean = true) {
         if (!loaded) return
         scope.launch {
             SettingsStore.write(
@@ -255,7 +257,7 @@ private fun SettingsScreen(
                     dataMode = dataMode,
                 )
             )
-            UpdateService.start(context, tickNow = true)
+            UpdateService.start(context, tickNow = tickNow)
         }
     }
 
@@ -300,7 +302,7 @@ private fun SettingsScreen(
                 logEnabled = logEnabled,
                 onToggle = { on ->
                     logEnabled = on
-                    save()
+                    save(tickNow = false)
                     if (!on) EventLog.clear(context)
                 },
                 onBack = { showLog = false },
@@ -563,12 +565,21 @@ private fun SettingsScreen(
                     ConnectedToggleRow(
                         options = listOf(15, 30, 60).map { it to "${it}s" },
                         selected = intervalSec,
-                        onSelect = { intervalSec = it; save() },
+                        onSelect = {
+                            val faster = it < intervalSec
+                            intervalSec = it; save(tickNow = faster)
+                        },
                     )
                     NetModeRow(R.drawable.ic_wifi, "On Wi-Fi", wifiMode,
-                        normalLabel = "Default (${intervalSec}s)") { wifiMode = it; save() }
+                        normalLabel = "Default (${intervalSec}s)") {
+                        val faster = it.ordinal < wifiMode.ordinal
+                        wifiMode = it; save(tickNow = faster)
+                    }
                     NetModeRow(R.drawable.ic_cell, "On mobile data", dataMode,
-                        normalLabel = "Default (${intervalSec}s)") { dataMode = it; save() }
+                        normalLabel = "Default (${intervalSec}s)") {
+                        val faster = it.ordinal < dataMode.ordinal
+                        dataMode = it; save(tickNow = faster)
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -585,7 +596,9 @@ private fun SettingsScreen(
                 Text(
                     "Live aircraft data from adsb.lol, the community ADS-B network. " +
                         "Aircraft photos via the Planespotters.net API — © their " +
-                        "respective photographers. Airline logos via Kiwi.com.",
+                        "respective photographers. Airline logos via Kiwi.com. " +
+                        "Aircraft silhouettes by ADS-B Radar (adsb-radar.com). " +
+                        "Aircraft & manufacturer logos via Wikimedia Commons.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(20.dp),
@@ -708,7 +721,9 @@ private fun StatusCard(
                 "The widget only refreshes while your home screen is visible.",
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
         else -> StatusUi(
-            R.drawable.ic_flight, "Up to date",
+            // The current aircraft's silhouette (ADS-B Radar icon set)
+            com.sam.airblock.util.AircraftIcons.iconFor(state.typeCode, state.category),
+            "Up to date",
             listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
             cs.secondaryContainer, cs.onSecondaryContainer)
     }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aircraft silhouette by ADS-B Radar (adsb-radar.com) - free with backlink -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="200" android:viewportHeight="200">
+    <path android:fillColor="@android:color/white" android:pathData="M 123.755 148.558 L 144.86 64.556" />
+    <path android:fillColor="@android:color/white" android:pathData="M 55.144 64.298 L 76.249 148.3" />
+</vector>

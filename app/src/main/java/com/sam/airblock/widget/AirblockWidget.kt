@@ -142,9 +142,9 @@ private fun WidgetContent(
             // Match the corner radius the launcher clips widgets to
             .cornerRadius(android.R.dimen.system_app_widget_background_radius)
             .padding(10.dp)
-            // Tapping the widget opens the app (which kicks a refresh on open)
-            .clickable(
-                androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
+            // Blank space taps still mean "refresh now"; the info elements
+            // (photo, route, chips) carry their own open-the-app actions
+            .clickable(actionRunCallback<RefreshAction>()),
     ) {
         when (state.status) {
             WidgetState.Status.OK ->
@@ -240,6 +240,8 @@ private fun AircraftCard(
             // Background only behind the placeholder: with Fit, any unused
             // sliver of the box must stay invisible, not show as a gray band
             val photoBox = GlanceModifier.fillMaxHeight().width(photoWidth).cornerRadius(16.dp)
+                .clickable(
+                    androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>())
             Box(
                 modifier = if (roundedPhoto == null)
                     photoBox.background(GlanceTheme.colors.surfaceVariant) else photoBox,
@@ -253,10 +255,15 @@ private fun AircraftCard(
                         modifier = GlanceModifier.fillMaxSize(),
                     )
                 } else {
+                    // No photo for this airframe: its type silhouette
+                    // (ADS-B Radar icon set), tinted like the placeholder
                     Image(
-                        provider = ImageProvider(R.drawable.ic_plane_placeholder),
-                        contentDescription = null,
-                        modifier = GlanceModifier.size(36.dp),
+                        provider = ImageProvider(
+                            com.sam.airblock.util.AircraftIcons.iconFor(
+                                state.typeCode, state.category)),
+                        contentDescription = state.typeName,
+                        colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant),
+                        modifier = GlanceModifier.size(44.dp),
                     )
                 }
             }
@@ -329,40 +336,42 @@ private fun AircraftCard(
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (manufacturerLogo != null && mfr != null) {
-                            val (mfrName, model) = mfr
-                            val logoH = 11f
-                            val logoW = (logoH * manufacturerLogo.width /
-                                manufacturerLogo.height).coerceAtMost(64f)
-                            Image(
-                                provider = ImageProvider(manufacturerLogo),
-                                contentDescription = mfrName,
-                                colorFilter = ColorFilter.tint(palette.onBgVariant),
-                                modifier = GlanceModifier.width(logoW.dp).height(logoH.dp),
-                            )
-                            if (modelLogo != null) {
-                                // The plane's OWN logo (A380, 787 Dreamliner…)
-                                Spacer(GlanceModifier.width(6.dp))
+                        when {
+                            // The plane's OWN logo says it all (787 Dreamliner,
+                            // A380…) — the company wordmark would be redundant
+                            modelLogo != null -> {
                                 val mLogoH = 13f
                                 val mLogoW = (mLogoH * modelLogo.width /
-                                    modelLogo.height).coerceAtMost(72f)
+                                    modelLogo.height).coerceAtMost(84f)
                                 Image(
                                     provider = ImageProvider(modelLogo),
-                                    contentDescription = model,
+                                    contentDescription = typeName,
                                     colorFilter = ColorFilter.tint(palette.onBgVariant),
                                     modifier = GlanceModifier.width(mLogoW.dp).height(mLogoH.dp),
                                 )
-                            } else if (model.isNotEmpty()) {
-                                Spacer(GlanceModifier.width(5.dp))
-                                Text(
-                                    text = model,
-                                    style = TextStyle(fontSize = 12.sp,
-                                        color = palette.onBgVariant),
-                                    maxLines = 1,
-                                )
                             }
-                        } else {
-                            Text(
+                            manufacturerLogo != null && mfr != null -> {
+                                val (mfrName, model) = mfr
+                                val logoH = 11f
+                                val logoW = (logoH * manufacturerLogo.width /
+                                    manufacturerLogo.height).coerceAtMost(64f)
+                                Image(
+                                    provider = ImageProvider(manufacturerLogo),
+                                    contentDescription = mfrName,
+                                    colorFilter = ColorFilter.tint(palette.onBgVariant),
+                                    modifier = GlanceModifier.width(logoW.dp).height(logoH.dp),
+                                )
+                                if (model.isNotEmpty()) {
+                                    Spacer(GlanceModifier.width(5.dp))
+                                    Text(
+                                        text = model,
+                                        style = TextStyle(fontSize = 12.sp,
+                                            color = palette.onBgVariant),
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            else -> Text(
                                 text = typeName,
                                 style = TextStyle(fontSize = 12.sp,
                                     color = palette.onBgVariant),
@@ -395,17 +404,41 @@ private fun AircraftCard(
 @Composable
 private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
     val hasRoute = state.originIata != null || state.destIata != null
-    if (!hasRoute && airlineLogo == null) return
+    // Until the route fetch settles, hold the space with a loading pill —
+    // confirmed-no-route (refresh done, still no airports) shows nothing
+    val routeLoading = !hasRoute && state.refreshing
+    if (!hasRoute && !routeLoading && airlineLogo == null) return
     Row(
         modifier = GlanceModifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Weight on a plain Box, with the pill filling it — more reliable
         // across launchers than weighting the complex pill row directly
-        if (hasRoute) {
-            Box(modifier = GlanceModifier.defaultWeight()) { RoutePill(state) }
-        } else {
-            Spacer(GlanceModifier.defaultWeight())
+        when {
+            hasRoute -> Box(modifier = GlanceModifier.defaultWeight()) { RoutePill(state) }
+            routeLoading -> Box(modifier = GlanceModifier.defaultWeight()) {
+                Row(
+                    modifier = GlanceModifier
+                        .fillMaxWidth()
+                        .background(GlanceTheme.colors.surfaceVariant)
+                        .cornerRadius(20.dp)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = GlanceModifier.size(12.dp),
+                        color = GlanceTheme.colors.onSurfaceVariant,
+                    )
+                    Spacer(GlanceModifier.width(8.dp))
+                    Text(
+                        text = "Looking up route…",
+                        style = TextStyle(fontSize = 11.sp,
+                            color = GlanceTheme.colors.onSurfaceVariant),
+                        maxLines = 1,
+                    )
+                }
+            }
+            else -> Spacer(GlanceModifier.defaultWeight())
         }
         airlineLogo?.let { logo ->
             Spacer(GlanceModifier.width(6.dp))
@@ -445,7 +478,9 @@ private fun RoutePill(state: WidgetState) {
             .fillMaxWidth()
             .background(GlanceTheme.colors.secondaryContainer)
             .cornerRadius(20.dp) // full pill: radius ≈ half the pill height
-            .padding(horizontal = 12.dp, vertical = 5.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .clickable(
+                androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Endpoint(state.originIata, state.originFlag, state.originCity,
@@ -601,7 +636,9 @@ private fun Endpoint(
 @Composable
 private fun ChipsRow(state: WidgetState) {
     Row(
-        modifier = GlanceModifier.fillMaxWidth(),
+        modifier = GlanceModifier.fillMaxWidth()
+            .clickable(
+                androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Emergency squawk leads the row in error colors

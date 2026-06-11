@@ -192,6 +192,7 @@ class Ticker(private val context: Context) {
                 etaEpochMs = geo.etaEpochMs
                     ?: prev.etaEpochMs.takeIf { sameFlight && leg == null },
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
+                category = ac.category,
                 squawkAlert = Squawk.emergencyLabel(ac.squawk),
                 originIata = leg?.first?.iata ?: prev.originIata.takeIf { sameFlight },
                 originCity = leg?.first?.location ?: prev.originCity.takeIf { sameFlight },
