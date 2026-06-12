@@ -17,6 +17,14 @@ class PhotoRepo(context: Context) {
 
     data class CachedPhoto(val file: File, val photographer: String?)
 
+    /** True when [photoFor] can answer from disk — positive or negative cache. */
+    fun isCached(hex: String): Boolean {
+        val safeHex = hex.lowercase().filter { it.isLetterOrDigit() }
+        val miss = File(dir, "$safeHex.none")
+        return File(dir, "$safeHex.jpg").exists() ||
+            (miss.exists() && System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS)
+    }
+
     /** Cached photo for [hex], fetching it if this aircraft is new. Null when none exists. */
     fun photoFor(hex: String): CachedPhoto? {
         val safeHex = hex.lowercase().filter { it.isLetterOrDigit() }

@@ -41,6 +41,25 @@ class ManufacturerLogoRepo(context: Context) {
         )
     }
 
+    /** True when [logoFor] for [typeName] needs no network (incl. unknown brands). */
+    fun isCached(typeName: String?): Boolean {
+        val mfr = manufacturerOf(typeName) ?: return true
+        return hasLocal(mfr.lowercase().replace(" ", "_"))
+    }
+
+    /** True when [logoForModel] for [typeCode] needs no network. */
+    fun isCachedModel(typeCode: String?): Boolean {
+        val fileName = MODEL_FILES[typeCode?.trim()?.uppercase()] ?: return true
+        return hasLocal("model_" + fileName.substringBeforeLast('.')
+            .lowercase().replace(Regex("\\W"), "_"))
+    }
+
+    private fun hasLocal(key: String): Boolean {
+        val miss = File(dir, "$key.none")
+        return File(dir, "$key.png").exists() ||
+            (miss.exists() && System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS)
+    }
+
     private fun cachedOrFetch(key: String, fileName: String): File? {
         val img = File(dir, "$key.png")
         val miss = File(dir, "$key.none")

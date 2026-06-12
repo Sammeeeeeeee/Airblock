@@ -30,6 +30,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -127,6 +128,8 @@ data class PermissionsState(
     val fine: Boolean = false,
     val background: Boolean = false,
     val usage: Boolean = false,
+    /** Battery set to "unrestricted" — optional, NOT part of allGranted. */
+    val unrestricted: Boolean = false,
 ) {
     val allGranted get() = fine && background && usage
 }
@@ -181,6 +184,17 @@ class MainActivity : ComponentActivity() {
                     onGrantUsage = {
                         startActivity(Intent(AndroidSettings.ACTION_USAGE_ACCESS_SETTINGS))
                     },
+                    onGrantUnrestricted = {
+                        // Direct system dialog ("Allow Airblock to always run in
+                        // the background?") — one tap instead of a settings dive
+                        startActivity(
+                            @Suppress("BatteryLife")
+                            Intent(
+                                AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:$packageName"),
+                            )
+                        )
+                    },
                 )
             }
         }
@@ -198,6 +212,8 @@ class MainActivity : ComponentActivity() {
             fine = granted(Manifest.permission.ACCESS_FINE_LOCATION),
             background = granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
             usage = Gates(this).hasUsageAccess(),
+            unrestricted = getSystemService(android.os.PowerManager::class.java)
+                .isIgnoringBatteryOptimizations(packageName),
         )
         widgetPlaced = getSystemService(AppWidgetManager::class.java)
             .getAppWidgetIds(ComponentName(this, AirblockWidgetReceiver::class.java))
@@ -221,6 +237,7 @@ private fun SettingsScreen(
     onGrantLocation: () -> Unit,
     onGrantBackground: () -> Unit,
     onGrantUsage: () -> Unit,
+    onGrantUnrestricted: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -507,8 +524,13 @@ private fun SettingsScreen(
                     rationale = "Pauses refreshes whenever your home screen isn't visible — " +
                         "this is what keeps Airblock's battery use near zero.",
                     granted = perms.usage,
-                    shape = GroupBottom,
+                    shape = GroupMiddle,
                     onClick = onGrantUsage,
+                )
+                Spacer(Modifier.height(GroupGap))
+                BatteryRow(
+                    granted = perms.unrestricted,
+                    onClick = onGrantUnrestricted,
                 )
                 Spacer(Modifier.height(24.dp))
             }
@@ -733,15 +755,27 @@ private fun StatusCard(
             "Add the widget to your home screen, or tap it to refresh now.",
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
         isStaleNow -> StatusUi(
-            R.drawable.ic_clock, "Data is stale",
+            // Keep showing the aircraft we know about; the clock only appears
+            // when there is genuinely no plane to draw
+            if (state.status == WidgetState.Status.OK)
+                com.sam.airblock.util.AircraftIcons.iconFor(state.typeCode, state.category)
+            else R.drawable.ic_clock,
+            "Data is stale",
             "Last update ${age()} (schedule: ${state.modeLabel ?: "normal"}). " +
                 "The widget only refreshes while your home screen is visible.",
             cs.surfaceContainerHigh, cs.onSurfaceVariant)
         else -> StatusUi(
-            // The current aircraft's silhouette (ADS-B Radar icon set)
-            com.sam.airblock.util.AircraftIcons.iconFor(state.typeCode, state.category),
+            // The current aircraft's silhouette (ADS-B Radar icon set);
+            // iconFor falls back to a generic airliner when the type is unknown
+            if (state.status == WidgetState.Status.NO_AIRCRAFT) R.drawable.ic_flight
+            else com.sam.airblock.util.AircraftIcons.iconFor(state.typeCode, state.category),
             "Up to date",
-            listOfNotNull(state.callsign, "updated ${age()}").joinToString(" · "),
+            listOfNotNull(
+                state.callsign
+                    ?: "no aircraft nearby".takeIf {
+                        state.status == WidgetState.Status.NO_AIRCRAFT },
+                "updated ${age()}",
+            ).joinToString(" · "),
             cs.secondaryContainer, cs.onSecondaryContainer)
     }
 
@@ -936,14 +970,28 @@ private fun StageRow(stage: WidgetState.Stage, content: Color) {
             style = MaterialTheme.typography.bodyMedium,
             color = if (pending) content.copy(alpha = 0.55f) else content,
         )
-        if (stage.state == WidgetState.Stage.FAILED) {
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "failed",
-                style = MaterialTheme.typography.labelSmall,
-                color = content.copy(alpha = 0.7f),
-            )
+        when {
+            stage.state == WidgetState.Stage.FAILED -> StageTag("failed", content)
+            stage.cached && stage.state == WidgetState.Stage.DONE ->
+                StageTag("cached", content)
         }
+    }
+}
+
+/** Tiny tonal pill after a checklist label ("cached", "failed"). */
+@Composable
+private fun StageTag(text: String, content: Color) {
+    Spacer(Modifier.width(8.dp))
+    Surface(
+        shape = CircleShape,
+        color = content.copy(alpha = 0.14f),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            color = content.copy(alpha = 0.85f),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
     }
 }
 
@@ -1264,6 +1312,90 @@ private fun PermissionRow(
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowForward, "grant",
                     tint = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Optional setup row: battery → "Unrestricted". Unlike the rows above, this is
+ * NOT required — Airblock works without it — but aggressive OEM battery
+ * managers (see dontkillmyapp.com) can still kill the engine; unrestricted
+ * makes the widget reliable on those phones. Neutral colors, never red.
+ */
+@Composable
+private fun BatteryRow(granted: Boolean, onClick: () -> Unit) {
+    val context = LocalContext.current
+    Surface(
+        onClick = onClick,
+        enabled = !granted,
+        shape = GroupBottom,
+        color = if (granted) MaterialTheme.colorScheme.secondaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        val onColor = if (granted) MaterialTheme.colorScheme.onSecondaryContainer
+        else MaterialTheme.colorScheme.onSurface
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(
+                        if (granted) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        if (granted) MaterialShapes.Cookie9Sided.toShape()
+                        else MaterialShapes.Circle.toShape(),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_battery_saver), null,
+                    tint = if (granted) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Battery — unrestricted",
+                        style = MaterialTheme.typography.titleMediumEmphasized,
+                        color = onColor,
+                    )
+                    StageTag("optional", onColor)
+                }
+                Text(
+                    "Some phones kill background apps anyway; unrestricted keeps the " +
+                        "widget reliable. Airblock's own gating keeps real usage near zero.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (granted) onColor
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Why? dontkillmyapp.com",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .clickable {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://dontkillmyapp.com/"))
+                            )
+                        },
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            if (granted) {
+                Icon(
+                    Icons.Filled.Check, "granted",
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            } else {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward, "grant",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

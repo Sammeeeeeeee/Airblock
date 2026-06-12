@@ -36,7 +36,9 @@ class LocationProvider(private val context: Context) {
     private var lastActiveRequest = 0L
     private var lastGood: Pair<Double, Double>? = null
 
-    data class Fix(val lat: Double, val lon: Double)
+    data class Fix(val lat: Double, val lon: Double,
+        /** True when served from a cached fix — no fresh platform request. */
+        val cached: Boolean = true)
 
     suspend fun currentFix(): Fix? {
         if (hasPermission()) {
@@ -45,7 +47,7 @@ class LocationProvider(private val context: Context) {
             val now = System.currentTimeMillis()
             if (cached != null && now - cached.time < STALE_MS) {
                 lastGood = cached.latitude to cached.longitude
-                return Fix(cached.latitude, cached.longitude)
+                return Fix(cached.latitude, cached.longitude, cached = true)
             }
             val mayRequest = now - lastActiveRequest > STALE_MS
             if (cached != null || lastGood != null) {
@@ -61,7 +63,7 @@ class LocationProvider(private val context: Context) {
                 }
                 cached?.let {
                     lastGood = it.latitude to it.longitude
-                    return Fix(it.latitude, it.longitude)
+                    return Fix(it.latitude, it.longitude, cached = true)
                 }
             } else if (mayRequest) {
                 // 2b. First fix ever — nothing stale to fall back on, block once
@@ -69,12 +71,12 @@ class LocationProvider(private val context: Context) {
                 val fresh = withTimeoutOrNull(FIX_TIMEOUT_MS) { balancedFix() }
                 if (fresh != null) {
                     lastGood = fresh.latitude to fresh.longitude
-                    return Fix(fresh.latitude, fresh.longitude)
+                    return Fix(fresh.latitude, fresh.longitude, cached = false)
                 }
             }
         }
         // 3. Whatever this app last saw
-        lastGood?.let { return Fix(it.first, it.second) }
+        lastGood?.let { return Fix(it.first, it.second, cached = true) }
         return null
     }
 
