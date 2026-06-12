@@ -10,6 +10,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.sam.airblock.data.NetMode
+import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.widget.AirblockWidgetReceiver
 import java.util.concurrent.TimeUnit
@@ -33,6 +34,15 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
             unschedule(ctx)
             return Result.success()
         }
+        // Weekly plane-alert-db refresh, strictly Wi-Fi, well off the tick path
+        run {
+            val gates = Gates(ctx)
+            val repo = PlaneAlertRepo(ctx)
+            if (gates.networkTransport() == "wifi" && !gates.dataSaverOn() && repo.isStale()) {
+                runCatching { repo.refresh() }
+            }
+        }
+
         if (!serviceRunning(ctx)) {
             val revived = UpdateService.start(ctx)
             if (!revived) {

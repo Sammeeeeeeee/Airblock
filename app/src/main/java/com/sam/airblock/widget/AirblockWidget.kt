@@ -104,22 +104,26 @@ private data class WidgetPalette(
 )
 
 @Composable
-private fun widgetPalette(specialType: String?): WidgetPalette = when (specialType) {
-    null -> WidgetPalette(
-        GlanceTheme.colors.widgetBackground,
-        GlanceTheme.colors.onSurface,
-        GlanceTheme.colors.onSurfaceVariant,
-    )
-    "Military" -> WidgetPalette(
-        GlanceTheme.colors.errorContainer,
-        GlanceTheme.colors.onErrorContainer,
-        GlanceTheme.colors.onErrorContainer,
-    )
-    else -> WidgetPalette(
-        GlanceTheme.colors.tertiaryContainer,
-        GlanceTheme.colors.onTertiaryContainer,
-        GlanceTheme.colors.onTertiaryContainer,
-    )
+private fun widgetPalette(state: WidgetState): WidgetPalette {
+    val military = state.specialType == "Military" ||
+        state.alertCategory.equals("Military", ignoreCase = true)
+    return when {
+        military -> WidgetPalette(
+            GlanceTheme.colors.errorContainer,
+            GlanceTheme.colors.onErrorContainer,
+            GlanceTheme.colors.onErrorContainer,
+        )
+        state.specialType != null -> WidgetPalette(
+            GlanceTheme.colors.tertiaryContainer,
+            GlanceTheme.colors.onTertiaryContainer,
+            GlanceTheme.colors.onTertiaryContainer,
+        )
+        else -> WidgetPalette(
+            GlanceTheme.colors.widgetBackground,
+            GlanceTheme.colors.onSurface,
+            GlanceTheme.colors.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable
@@ -133,7 +137,7 @@ private fun WidgetContent(
     // Non-standard aircraft (military, police helicopters…) get an
     // attention-grabbing tonal background — content colors must follow the
     // container role or dark-theme contrast breaks.
-    val palette = widgetPalette(state.specialType)
+    val palette = widgetPalette(state)
     val bg = palette.bg
     Box(
         modifier = GlanceModifier
@@ -300,32 +304,6 @@ private fun AircraftCard(
                                 )
                             ),
                     )
-                    // Non-standard aircraft badge next to the name
-                    state.specialType?.let { special ->
-                        Spacer(GlanceModifier.width(6.dp))
-                        Row(
-                            modifier = GlanceModifier
-                                .background(GlanceTheme.colors.error)
-                                .cornerRadius(12.dp)
-                                .padding(horizontal = 6.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Image(
-                                provider = ImageProvider(R.drawable.ic_shield),
-                                contentDescription = special,
-                                colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
-                                modifier = GlanceModifier.size(10.dp),
-                            )
-                            Spacer(GlanceModifier.width(3.dp))
-                            Text(
-                                text = special.uppercase(),
-                                style = TextStyle(fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GlanceTheme.colors.onError),
-                                maxLines = 1,
-                            )
-                        }
-                    }
                 }
                 // Type line: manufacturer WORDMARK (tinted to theme) + model,
                 // falling back to the full text when no logo is cached
@@ -380,13 +358,49 @@ private fun AircraftCard(
                         }
                     }
                 }
-                // The operating airline, quietly under the type
-                state.airlineName?.let { airline ->
-                    Text(
-                        text = airline,
-                        style = TextStyle(fontSize = 10.sp, color = palette.onBgVariant),
-                        maxLines = 1,
-                    )
+                // The operating airline, quietly under the type — with the
+                // tag badge right-aligned on the same row (moved off the
+                // callsign row, where long tags were getting clipped)
+                val badge = state.alertTag ?: state.specialType
+                if (state.airlineName != null || badge != null) {
+                    Row(
+                        modifier = GlanceModifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        state.airlineName?.let { airline ->
+                            Text(
+                                text = airline,
+                                style = TextStyle(fontSize = 10.sp,
+                                    color = palette.onBgVariant),
+                                maxLines = 1,
+                            )
+                        }
+                        Spacer(GlanceModifier.defaultWeight())
+                        badge?.let { tag ->
+                            Row(
+                                modifier = GlanceModifier
+                                    .background(GlanceTheme.colors.error)
+                                    .cornerRadius(12.dp)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Image(
+                                    provider = ImageProvider(R.drawable.ic_shield),
+                                    contentDescription = tag,
+                                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
+                                    modifier = GlanceModifier.size(9.dp),
+                                )
+                                Spacer(GlanceModifier.width(3.dp))
+                                Text(
+                                    text = tag.uppercase(),
+                                    style = TextStyle(fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GlanceTheme.colors.onError),
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

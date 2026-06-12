@@ -272,6 +272,12 @@ private fun SettingsScreen(
         }
     }
 
+    // A radius change only needs a fetch when it could change the ANSWER:
+    // no plane currently shown, or the shown plane is outside the new radius
+    fun radiusNeedsTick(newNm: Float): Boolean =
+        widgetState.status != WidgetState.Status.OK ||
+            (widgetState.distanceKm ?: 0.0) > newNm * 1.852
+
     val scrollState = rememberScrollState()
     var setupSectionY by remember { mutableStateOf(0) }
     val pageMotion = MaterialTheme.motionScheme
@@ -527,7 +533,10 @@ private fun SettingsScreen(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         FilledTonalIconButton(
-                            onClick = { radiusNm = (radiusNm - 5f).coerceAtLeast(5f); save() },
+                            onClick = {
+                                radiusNm = (radiusNm - 5f).coerceAtLeast(5f)
+                                save(tickNow = radiusNeedsTick(radiusNm))
+                            },
                             shapes = IconButtonDefaults.shapes(),
                         ) {
                             Icon(painterResource(R.drawable.ic_remove), "decrease radius")
@@ -535,14 +544,17 @@ private fun SettingsScreen(
                         Slider(
                             value = radiusNm,
                             onValueChange = { radiusNm = it },
-                            onValueChangeFinished = { save() },
+                            onValueChangeFinished = { save(tickNow = radiusNeedsTick(radiusNm)) },
                             valueRange = 5f..250f,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(horizontal = 8.dp),
                         )
                         FilledTonalIconButton(
-                            onClick = { radiusNm = (radiusNm + 5f).coerceAtMost(250f); save() },
+                            onClick = {
+                                radiusNm = (radiusNm + 5f).coerceAtMost(250f)
+                                save(tickNow = radiusNeedsTick(radiusNm))
+                            },
                             shapes = IconButtonDefaults.shapes(),
                         ) {
                             Icon(painterResource(R.drawable.ic_add), "increase radius")
@@ -598,7 +610,8 @@ private fun SettingsScreen(
                         "Aircraft photos via the Planespotters.net API — © their " +
                         "respective photographers. Airline logos via Kiwi.com. " +
                         "Aircraft silhouettes by ADS-B Radar (adsb-radar.com). " +
-                        "Aircraft & manufacturer logos via Wikimedia Commons.",
+                        "Aircraft & manufacturer logos via Wikimedia Commons. " +
+                        "Interesting-aircraft tags from sdr-enthusiasts/plane-alert-db.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(20.dp),

@@ -33,6 +33,10 @@ data class WidgetState(
     val specialType: String? = null,
     /** ADS-B emitter category ("A3", "A7"…) — drives the silhouette fallback. */
     val category: String? = null,
+    /** First tag from plane-alert-db for this airframe ("Military", "Royal"…). */
+    val alertTag: String? = null,
+    /** plane-alert-db category, e.g. "Military", "Government". */
+    val alertCategory: String? = null,
     val squawkAlert: String? = null,   // "7700 EMERGENCY" or null
     val originIata: String? = null,
     val originCity: String? = null,
@@ -98,7 +102,7 @@ data class WidgetState(
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
         manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
-        specialType, category, registration, modeLabel,
+        specialType, category, alertTag, alertCategory, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")
 }

@@ -9,6 +9,7 @@ import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.ManufacturerLogoRepo
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PhotoRepo
+import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.RouteResult
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
@@ -39,6 +40,7 @@ class Ticker(private val context: Context) {
     private val photos = PhotoRepo(context)
     private val airlineLogos = AirlineLogoRepo(context)
     private val manufacturerLogos = ManufacturerLogoRepo(context)
+    private val planeAlerts = PlaneAlertRepo(context)
     private val gates = Gates(context)
     private val api = AdsbApi()
 
@@ -168,6 +170,8 @@ class Ticker(private val context: Context) {
             val resolvedTypeName = ac.desc?.let { prettyType(it) }
                 ?: TypeNames.name(ac.t) ?: ac.t
             val sameType = prev.typeName != null && prev.typeName == resolvedTypeName
+            // Local hex lookup against the cached plane-alert-db — no network
+            val alert = planeAlerts.lookup(ac.hex)
 
             fun buildState(
                 photoPath: String?, photoCredit: String?, logoPath: String?,
@@ -193,6 +197,8 @@ class Ticker(private val context: Context) {
                     ?: prev.etaEpochMs.takeIf { sameFlight && leg == null },
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 category = ac.category,
+                alertTag = alert?.tags?.firstOrNull(),
+                alertCategory = alert?.category,
                 squawkAlert = Squawk.emergencyLabel(ac.squawk),
                 originIata = leg?.first?.iata ?: prev.originIata.takeIf { sameFlight },
                 originCity = leg?.first?.location ?: prev.originCity.takeIf { sameFlight },
