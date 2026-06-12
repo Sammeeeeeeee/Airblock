@@ -48,15 +48,23 @@ jobs:
       # Persistent debug keystore (optional): set repo secret DEBUG_KEYSTORE_B64 to a
       # base64-encoded debug.keystore so every build is signed identically and the app
       # updates in place on the phone instead of requiring uninstall/reinstall.
+      # The keystore goes to an EXPLICIT path handed to Gradle via
+      # DEBUG_KEYSTORE_FILE (read in app/build.gradle.kts) — restoring
+      # ~/.android/debug.keystore was silently ignored by AGP on the runners
+      # (v3.1.0/v4.0.0/v4.1 all shipped with different one-off certs).
+      # keytool-validating it makes a corrupt secret fail THIS step loudly
+      # instead of producing yet another unupdatable APK.
       - name: Restore debug keystore
         env:
           KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            mkdir -p ~/.android
             # tr strips CR/LF a Windows-side `gh secret set` may have smuggled
             # in — GNU base64 hard-fails on them ("invalid input")
-            echo "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > ~/.android/debug.keystore
+            echo "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            keytool -list -keystore "$RUNNER_TEMP/debug.keystore" \
+              -alias androiddebugkey -storepass android
+            echo "DEBUG_KEYSTORE_FILE=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
             echo "Using persistent debug keystore from secret"
           else
             echo "::warning::DEBUG_KEYSTORE_B64 secret not set — this APK is signed with a one-off key generated on this runner. Installing it over an existing install fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE (uninstall/reinstall required). Set the secret to make builds update in place."
@@ -67,6 +75,13 @@ jobs:
 
       - name: Build debug APK
         run: gradle assembleDebug
+
+      # Visible signature audit: if this digest ever changes between releases,
+      # in-place updates will break — catch it in the log, not on the phone
+      - name: Print APK signing certificate
+        run: |
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs \
+            app/build/outputs/apk/debug/app-debug.apk | grep -E "SHA-256|DN"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
