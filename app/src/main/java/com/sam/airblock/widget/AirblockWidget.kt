@@ -169,7 +169,12 @@ private fun WidgetContent(
  */
 @Composable
 private fun StatusBadge(state: WidgetState) {
-    val showSpinner = state.refreshing
+    // When the aircraft is already on the glass and only the route is still
+    // loading, its skeleton pill is indicator enough — two spinners is noise
+    val routeSkeletonVisible = state.refreshing &&
+        state.status == WidgetState.Status.OK &&
+        state.originIata == null && state.destIata == null
+    val showSpinner = state.refreshing && !routeSkeletonVisible
     val icon: Int
     val tint: ColorProvider
     when {
@@ -285,24 +290,15 @@ private fun AircraftCard(
                         expressiveText(callsignText, callsignColor,
                             heightPx = (28 * density).toInt(), maxWidthPx = maxCallsignWidthPx)
                     }
-                    // Tapping the callsign opens this flight in Flightradar24
-                    // (or the browser when the app isn't installed)
+                    // (FR24 deep-linking removed: the app intercepts the URL
+                    // but just opens its website view — no public deep-link
+                    // API exists, so the tap falls through to refresh)
                     Image(
                         provider = ImageProvider(callsignBmp),
                         contentDescription = callsignText,
                         modifier = GlanceModifier
                             .width((callsignBmp.width / density).dp)
-                            .height((callsignBmp.height / density).dp)
-                            .clickable(
-                                actionStartActivity(
-                                    android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(
-                                            "https://www.flightradar24.com/" +
-                                                callsignText.replace(" ", "")),
-                                    )
-                                )
-                            ),
+                            .height((callsignBmp.height / density).dp),
                     )
                 }
                 // Type line: manufacturer WORDMARK (tinted to theme) + model,

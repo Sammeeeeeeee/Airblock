@@ -301,7 +301,11 @@ private fun SettingsScreen(
             }
         },
         label = "page",
-        modifier = Modifier.fillMaxSize(),
+        // Surface-coloured backdrop: during the slide the gap between pages
+        // exposed the raw window background — a white flash in light theme
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface),
     ) { logPage ->
         if (logPage) {
             LogScreen(
