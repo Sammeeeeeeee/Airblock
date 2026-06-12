@@ -68,6 +68,8 @@ object AircraftIcons {
         all(R.drawable.ac_a7, "R22", "R44", "R66", "B06", "B407", "B412", "B429",
             "B505", "EC20", "EC30", "EC35", "EC45", "EC55", "EC75", "AS50", "AS55",
             "A109", "A119", "A139", "A169", "A189", "S76", "S92", "H160", "HLE")
-        all(R.drawable.ac_f15, "EUFI", "F15", "F16", "F35", "F18", "HAWK")
+        // ac_f15's traced path is unsalvageable — the A6 delta silhouette
+        // (high-performance category) is the right shape for fast jets anyway
+        all(R.drawable.ac_a6, "EUFI", "F15", "F16", "F35", "F18", "HAWK")
     }
 }

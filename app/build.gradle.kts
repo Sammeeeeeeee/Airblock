@@ -13,8 +13,25 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 17
-        versionName = "4.0"
+        versionCode = 19
+        versionName = "4.2"
+    }
+
+    // CI signing: AGP kept regenerating a fresh debug key on every runner even
+    // though the workflow restored ~/.android/debug.keystore (three releases,
+    // three different certs -> INSTALL_FAILED_UPDATE_INCOMPATIBLE on update).
+    // Taking the path from the env removes every assumption about where AGP
+    // looks; locally nothing changes (env unset -> default debug keystore).
+    System.getenv("DEBUG_KEYSTORE_FILE")?.let { path ->
+        val ks = file(path)
+        if (ks.exists()) {
+            signingConfigs.getByName("debug") {
+                storeFile = ks
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {

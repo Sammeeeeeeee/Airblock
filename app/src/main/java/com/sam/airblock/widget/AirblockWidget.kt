@@ -246,14 +246,11 @@ private fun AircraftCard(
                     roundCorners(it, it.width * 16f / photoWidth.value.coerceAtLeast(1f))
                 }
             }
-            // Background only behind the placeholder: with Fit, any unused
-            // sliver of the box must stay invisible, not show as a gray band
             val photoBox = GlanceModifier.fillMaxHeight().width(photoWidth).cornerRadius(16.dp)
                 .clickable(
                     androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>())
             Box(
-                modifier = if (roundedPhoto == null)
-                    photoBox.background(GlanceTheme.colors.surfaceVariant) else photoBox,
+                modifier = photoBox,
                 contentAlignment = Alignment.Center,
             ) {
                 if (roundedPhoto != null) {
@@ -264,15 +261,28 @@ private fun AircraftCard(
                         modifier = GlanceModifier.fillMaxSize(),
                     )
                 } else {
-                    // No photo for this airframe: its type silhouette
-                    // (ADS-B Radar icon set), tinted like the placeholder
-                    Image(
-                        provider = ImageProvider(
+                    // No photo (yet): the type's silhouette on a tonal rounded
+                    // card, drawn as a BITMAP — RemoteViews mangled the tinted
+                    // vector (it rendered as a solid slab), and canvas drawing
+                    // is what the route path and callsign already use.
+                    val phBg = GlanceTheme.colors.surfaceVariant.getColor(context).toArgb()
+                    val phFg = GlanceTheme.colors.onSurfaceVariant.getColor(context).toArgb()
+                    val placeholder = remember(
+                        state.typeCode, state.category, phBg, phFg, photoWidth.value,
+                    ) {
+                        photoPlaceholderBitmap(
+                            context,
                             com.sam.airblock.util.AircraftIcons.iconFor(
-                                state.typeCode, state.category)),
+                                state.typeCode, state.category),
+                            bg = phBg, fg = phFg,
+                            cornerPx = 480f * 16f / photoWidth.value.coerceAtLeast(1f),
+                        )
+                    }
+                    Image(
+                        provider = ImageProvider(placeholder),
                         contentDescription = state.typeName,
-                        colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant),
-                        modifier = GlanceModifier.size(44.dp),
+                        contentScale = ContentScale.Fit,
+                        modifier = GlanceModifier.fillMaxSize(),
                     )
                 }
             }
@@ -527,6 +537,35 @@ private fun RoutePill(state: WidgetState) {
         Endpoint(state.destIata, state.destFlag, state.destCity,
             horizontal = Alignment.End)
     }
+}
+
+/**
+ * Always-an-airplane placeholder for the photo box: the aircraft type's
+ * silhouette, tinted, centered on a rounded tonal card. 3:2 like the photos.
+ */
+private fun photoPlaceholderBitmap(
+    context: Context,
+    iconRes: Int,
+    bg: Int,
+    fg: Int,
+    cornerPx: Float,
+): Bitmap {
+    val w = 480
+    val h = 320
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    canvas.drawRoundRect(
+        android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()),
+        cornerPx, cornerPx,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg },
+    )
+    context.getDrawable(iconRes)?.mutate()?.let { d ->
+        d.setTint(fg)
+        val side = (h * 0.66f).toInt()
+        d.setBounds(w / 2 - side / 2, h / 2 - side / 2, w / 2 + side / 2, h / 2 + side / 2)
+        d.draw(canvas)
+    }
+    return bmp
 }
 
 /**

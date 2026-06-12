@@ -72,8 +72,10 @@ class Ticker(private val context: Context) {
      * the DataStore flow with zero RemoteViews churn.
      */
     private suspend fun setStage(key: String, state: String, label: String? = null,
-        stageText: String? = null) {
-        stages[key]?.let { stages[key] = it.copy(state = state, label = label ?: it.label) }
+        stageText: String? = null, cached: Boolean = false) {
+        stages[key]?.let {
+            stages[key] = it.copy(state = state, label = label ?: it.label, cached = cached)
+        }
         val (prev, next) = WidgetStateStore.update(context) {
             it.copy(refreshing = true, stages = stageList(),
                 refreshStage = stageText ?: it.refreshStage)
@@ -125,7 +127,7 @@ class Ticker(private val context: Context) {
             return
         }
         try {
-            setStage("location", WidgetState.Stage.DONE)
+            setStage("location", WidgetState.Stage.DONE, cached = fix.cached)
             setStage("aircraft", WidgetState.Stage.RUNNING,
                 stageText = "Finding the nearest aircraft…")
             // Ground traffic is excluded: if the nearest transponder is a
@@ -190,7 +192,12 @@ class Ticker(private val context: Context) {
                 onGround = ac.onGround,
                 speedMph = ac.gs?.let { Units.ktsToMph(it) },
                 mach = ac.mach,
-                distanceKm = ac.dst?.let { Units.nmToKm(it) },
+                // GROUND distance (great-circle over coordinates): a plane
+                // 0.5 km directly overhead is 0 km away, not 0.5 — the API's
+                // dst is slant range and only serves as fallback
+                distanceKm = if (ac.lat != null && ac.lon != null)
+                    Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
+                else ac.dst?.let { Units.nmToKm(it) },
                 routeProgress = geo.progress
                     ?: prev.routeProgress.takeIf { sameFlight && leg == null },
                 etaEpochMs = geo.etaEpochMs
@@ -241,7 +248,7 @@ class Ticker(private val context: Context) {
                         callsign == null -> setStage("route", WidgetState.Stage.DONE,
                             label = "Route (no callsign)")
                         routeCached -> setStage("route", WidgetState.Stage.DONE,
-                            label = "Route (cached)")
+                            cached = true)
                         else -> {
                             setStage("route", WidgetState.Stage.RUNNING)
                             try {
@@ -279,6 +286,7 @@ class Ticker(private val context: Context) {
                 }
                 launch {
                     setStage("photo", WidgetState.Stage.RUNNING)
+                    val photoWasCached = photos.isCached(ac.hex)
                     val photo = photos.photoFor(ac.hex)
                     if (photo != null) {
                         updateAndRender {
@@ -286,10 +294,13 @@ class Ticker(private val context: Context) {
                                 photoCredit = photo.photographer)
                         }
                     }
-                    setStage("photo", WidgetState.Stage.DONE)
+                    setStage("photo", WidgetState.Stage.DONE, cached = photoWasCached)
                 }
                 launch {
                     setStage("logos", WidgetState.Stage.RUNNING)
+                    val logosWereCached = airlineLogos.isCached(callsign) &&
+                        manufacturerLogos.isCached(resolvedTypeName) &&
+                        manufacturerLogos.isCachedModel(ac.t)
                     val logoPath = airlineLogos.logoFor(callsign)?.absolutePath
                     val mfrLogoPath = manufacturerLogos.logoFor(resolvedTypeName)?.absolutePath
                     val modelLogoPath = manufacturerLogos.logoForModel(ac.t)?.absolutePath
@@ -300,16 +311,19 @@ class Ticker(private val context: Context) {
                             modelLogoPath = modelLogoPath ?: it.modelLogoPath,
                         )
                     }
-                    setStage("logos", WidgetState.Stage.DONE)
+                    setStage("logos", WidgetState.Stage.DONE, cached = logosWereCached)
                 }
             }
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s".format(
                 fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
                 route?.airportCodes ?: "?"))
+            val groundKm = if (ac.lat != null && ac.lon != null)
+                Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
+            else ac.dst?.let { Units.nmToKm(it) }
             if (log) EventLog.append(context,
                 "updated — ${callsign ?: ac.hex}" +
-                    (ac.dst?.let { " · %.1f km".format(Units.nmToKm(it)) } ?: ""))
+                    (groundKm?.let { " · %.1f km".format(it) } ?: ""))
 
             updateAndRender {
                 it.copy(refreshing = false, refreshStage = null, stages = stageList())

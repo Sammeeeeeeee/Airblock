@@ -82,9 +82,11 @@ data class WidgetState(
     /** One step of a refresh, as shown in the status card's checklist. */
     @Serializable
     data class Stage(
-        val key: String,   // "location" | "aircraft" | "route" | "media"
+        val key: String,   // "location" | "aircraft" | "route" | "photo" | "logos"
         val label: String, // "Location", "Nearest aircraft", …
         val state: String, // PENDING | RUNNING | DONE | FAILED
+        /** True when the step was served from cache — no network touched. */
+        val cached: Boolean = false,
     ) {
         companion object {
             const val PENDING = "pending"

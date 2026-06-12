@@ -3,6 +3,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="512.000000" android:viewportHeight="512.000000">
+    <group android:scaleX="0.094000" android:scaleY="-0.094000" android:translateX="15.360" android:translateY="496.640">
     <path android:fillColor="@android:color/white" android:pathData="M2507 5080 c-68 -80 -132 -246 -161 -420 -28 -167 -36 -354 -36 -820
 l0 -456 -47 -36 c-43 -32 -309 -198 -318 -198 -2 0 -5 56 -7 123 -2 86 -7 129
 -17 140 -11 14 -33 17 -112 17 -134 0 -134 1 -134 -209 0 -152 1 -156 23 -166
@@ -20,4 +21,5 @@ l0 -456 -47 -36 c-43 -32 -309 -198 -318 -198 -2 0 -5 56 -7 123 -2 86 -7 129
 14 22 166 0 210 0 209 -134 209 -79 0 -101 -3 -112 -17 -10 -11 -15 -54 -17
 -140 -2 -67 -5 -123 -7 -123 -9 0 -275 166 -317 198 l-48 36 0 451 c0 600 -14
 777 -75 988 -44 153 -129 297 -175 297 -10 0 -34 -18 -53 -40z" />
+    </group>
 </vector>

@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Optional setup step: "unrestricted" battery (dontkillmyapp.com) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Special permission: granted by the user via Settings > Usage access.
          Used ONLY to check whether the launcher is in the foreground, so the
          widget never refreshes while another app (e.g. Netflix) is open. -->

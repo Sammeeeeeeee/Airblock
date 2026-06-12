@@ -17,6 +17,15 @@ class AirlineLogoRepo(context: Context) {
 
     private val dir = File(context.cacheDir, "airlines").apply { mkdirs() }
 
+    /** True when [logoFor] can answer without network (incl. unknown airlines). */
+    fun isCached(callsign: String?): Boolean {
+        val icao = AirlineCodes.icaoPrefix(callsign) ?: return true
+        if (AirlineCodes.iataFor(icao) == null) return true
+        val miss = File(dir, "$icao.none")
+        return File(dir, "$icao.png").exists() ||
+            (miss.exists() && System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS)
+    }
+
     /** Cached logo for the airline flying [callsign], or null when unknown. */
     fun logoFor(callsign: String?): File? {
         val icao = AirlineCodes.icaoPrefix(callsign) ?: return null
