@@ -13,8 +13,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 19
-        versionName = "4.2"
+        versionCode = 20
+        versionName = "4.3"
     }
 
     // CI signing: AGP kept regenerating a fresh debug key on every runner even
