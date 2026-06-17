@@ -364,48 +364,42 @@ private fun AircraftCard(
                         }
                     }
                 }
-                // The operating airline, quietly under the type — with the
-                // tag badge right-aligned on the same row (moved off the
-                // callsign row, where long tags were getting clipped)
+                // The operating airline, quietly under the type
+                state.airlineName?.let { airline ->
+                    Text(
+                        text = airline,
+                        style = TextStyle(fontSize = 10.sp,
+                            color = palette.onBgVariant),
+                        maxLines = 1,
+                    )
+                }
+                // Special-aircraft tag (military, police…): left-aligned and
+                // wrapping its own content, flush with the title's left edge —
+                // it used to float at the far right, reading as detached
                 val badge = state.alertTag ?: state.specialType
-                if (state.airlineName != null || badge != null) {
+                badge?.let { tag ->
+                    Spacer(GlanceModifier.height(3.dp))
                     Row(
-                        modifier = GlanceModifier.fillMaxWidth(),
+                        modifier = GlanceModifier
+                            .background(GlanceTheme.colors.error)
+                            .cornerRadius(12.dp)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        state.airlineName?.let { airline ->
-                            Text(
-                                text = airline,
-                                style = TextStyle(fontSize = 10.sp,
-                                    color = palette.onBgVariant),
-                                maxLines = 1,
-                            )
-                        }
-                        Spacer(GlanceModifier.defaultWeight())
-                        badge?.let { tag ->
-                            Row(
-                                modifier = GlanceModifier
-                                    .background(GlanceTheme.colors.error)
-                                    .cornerRadius(12.dp)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Image(
-                                    provider = ImageProvider(R.drawable.ic_shield),
-                                    contentDescription = tag,
-                                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
-                                    modifier = GlanceModifier.size(9.dp),
-                                )
-                                Spacer(GlanceModifier.width(3.dp))
-                                Text(
-                                    text = tag.uppercase(),
-                                    style = TextStyle(fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = GlanceTheme.colors.onError),
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                        Image(
+                            provider = ImageProvider(R.drawable.ic_shield),
+                            contentDescription = tag,
+                            colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
+                            modifier = GlanceModifier.size(9.dp),
+                        )
+                        Spacer(GlanceModifier.width(3.dp))
+                        Text(
+                            text = tag.uppercase(),
+                            style = TextStyle(fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GlanceTheme.colors.onError),
+                            maxLines = 1,
+                        )
                     }
                 }
             }
