@@ -482,15 +482,17 @@ class Ticker(private val context: Context) {
     }
 
     /**
-     * Callsign → IATA flight number from the local airline table: "BAW813C" →
-     * "BA813" (IATA designator + the numeric core, dropping any ATC suffix).
-     * Falls back to the bare digits when the airline isn't known.
+     * Callsign → IATA flight number, but ONLY for a recognised airline: "BAW813C"
+     * → "BA813" (IATA designator + numeric core, dropping any ATC suffix).
+     * Returns null for private/biz-jet callsigns whose operator isn't in the
+     * table — the bare digits ("GCK40" → "40") are meaningless as a flight
+     * number, so we show nothing rather than a random number.
      */
     private fun flightNumberFromCallsign(cs: String?): String? {
         if (cs == null) return null
+        val iata = AirlineCodes.iataForCallsign(cs) ?: return null
         val digits = cs.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }
-        if (digits.isEmpty()) return null
-        return (AirlineCodes.iataForCallsign(cs) ?: "") + digits
+        return if (digits.isEmpty()) null else "$iata$digits"
     }
 
     /** Format an epoch in a given IANA zone as "HH:mm" (UTC if zone unknown). */

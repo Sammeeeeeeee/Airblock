@@ -585,9 +585,10 @@ private fun RoutePill(state: WidgetState) {
                 modifier = GlanceModifier.fillMaxWidth().height(14.dp),
             )
             // Real times from AeroAPI: elapsed-since-departure / total
-            // scheduled duration ("00:25/03:12"), with the arrival delay beside
-            // it — red when late, green when early. Falls back to the geometry
-            // ETA duration when AeroAPI isn't on.
+            // scheduled duration ("00:25/03:12"), with how much LONGER (+) or
+            // SHORTER (−) the journey is running than scheduled beside it — this
+            // is the flight-time difference (arrival delay minus departure
+            // delay), not the landing delay. Falls back to the geometry ETA.
             val flown = elapsedOverTotal(state)
             if (flown != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -597,7 +598,7 @@ private fun RoutePill(state: WidgetState) {
                             color = GlanceTheme.colors.onSecondaryContainer),
                         maxLines = 1,
                     )
-                    state.arrDelayMin?.let { d ->
+                    flightTimeDelta(state)?.let { d ->
                         if (d in -1..1) return@let
                         Spacer(GlanceModifier.width(4.dp))
                         Text(
@@ -927,6 +928,18 @@ private fun elapsedOverTotal(state: WidgetState): String? {
 private fun hhmm(ms: Long): String {
     val m = (ms / 60_000).toInt()
     return "%02d:%02d".format(m / 60, m % 60)
+}
+
+/**
+ * How much longer (+) or shorter (−) the journey is running than scheduled, in
+ * minutes — the flight-time difference, i.e. arrival delay minus departure
+ * delay. (A flight that leaves 30 late and lands 30 late kept its booked
+ * duration → 0, not +30.) Falls back to the arrival delay when the departure
+ * delay is unknown; null when no real times apply.
+ */
+private fun flightTimeDelta(state: WidgetState): Int? {
+    val arr = state.arrDelayMin ?: return null
+    return state.depDelayMin?.let { arr - it } ?: arr
 }
 
 /** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */
