@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+// Optional convenience seed for the AeroAPI key on local builds: read from a
+// gitignored local.properties (AERO_API_KEY=…) or the environment. Defaults to
+// empty so the key is NOT baked into the APK unless you explicitly opt in — the
+// secure, primary path is to paste the key into the app's Tuning screen, where
+// it is stored in Android Keystore-backed EncryptedSharedPreferences only.
+val aeroApiKeySeed: String = run {
+    val props = Properties()
+    rootProject.file("local.properties").takeIf { it.exists() }
+        ?.inputStream()?.use { props.load(it) }
+    props.getProperty("AERO_API_KEY") ?: System.getenv("AERO_API_KEY") ?: ""
 }
 
 android {
@@ -15,6 +29,10 @@ android {
         targetSdk = 35
         versionCode = 19
         versionName = "4.2"
+
+        // Seed only — the running key lives in EncryptedSharedPreferences. Empty
+        // unless AERO_API_KEY is set in local.properties / the environment.
+        buildConfigField("String", "AERO_API_KEY", "\"$aeroApiKeySeed\"")
     }
 
     // CI signing: AGP kept regenerating a fresh debug key on every runner even
@@ -58,6 +76,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     lint {
@@ -92,6 +111,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    // Android Keystore-backed storage for the one secret we hold (AeroAPI key)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
 

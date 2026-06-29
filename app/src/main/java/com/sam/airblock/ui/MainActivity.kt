@@ -58,9 +58,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroup
 import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
@@ -106,13 +109,18 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.coroutineScope
 import com.sam.airblock.R
+import com.sam.airblock.data.AeroApi
+import com.sam.airblock.data.AeroPrefs
+import com.sam.airblock.data.AeroStore
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
+import com.sam.airblock.data.SecureKeyStore
 import com.sam.airblock.data.Settings
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
@@ -622,6 +630,11 @@ private fun SettingsScreen(
             }
             Spacer(Modifier.height(24.dp))
 
+            // ---- Real flight times (AeroAPI) ------------------------------
+            SectionLabel("Flight times")
+            FlightTimesCard()
+            Spacer(Modifier.height(24.dp))
+
             if (perms.allGranted) setupSection()
 
             // ---- Attribution ----------------------------------------------
@@ -637,7 +650,8 @@ private fun SettingsScreen(
                         "respective photographers. Airline logos via Kiwi.com. " +
                         "Aircraft silhouettes by ADS-B Radar (adsb-radar.com). " +
                         "Aircraft & manufacturer logos via Wikimedia Commons. " +
-                        "Interesting-aircraft tags from sdr-enthusiasts/plane-alert-db.",
+                        "Interesting-aircraft tags from sdr-enthusiasts/plane-alert-db. " +
+                        "Scheduled & actual flight times via FlightAware AeroAPI (optional).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(20.dp),
@@ -696,6 +710,235 @@ private fun <T> ConnectedToggleRow(
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp),
             ) {
                 Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Tuning card for the optional AeroAPI flight-times feature: paste or clear the
+ * key (stored encrypted on-device), switch it on/off, and watch the free-quota
+ * spend. The switch trips itself off automatically once the monthly allowance
+ * is gone, after which the widget falls back to its ETA estimate.
+ */
+@Composable
+private fun FlightTimesCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val cs = MaterialTheme.colorScheme
+    val aero by AeroStore.flow(context).collectAsState(initial = AeroPrefs())
+    var hasKey by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    var showKeyDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        hasKey = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            SecureKeyStore.hasAeroKey(context)
+        }
+    }
+
+    // Free /account/usage poll — refreshes the authoritative spend and may trip
+    // the switch off if the budget is already gone.
+    fun pollUsage() {
+        scope.launch {
+            checking = true
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { AeroApi(context).usageCostUsd() }
+            }
+            val hm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                .format(java.util.Date())
+            result.fold(
+                onSuccess = { AeroStore.recordUsage(context, it, "Checked $hm") },
+                onFailure = {
+                    AeroStore.recordUsage(context, null,
+                        "Check failed — ${it.message ?: "error"}")
+                },
+            )
+            checking = false
+        }
+    }
+
+    fun setEnabled(on: Boolean) {
+        if (on && !hasKey) { showKeyDialog = true; return }
+        scope.launch {
+            AeroStore.setEnabled(context, on)
+            if (on) pollUsage()
+        }
+    }
+
+    fun saveKey(raw: String) {
+        val key = raw.trim()
+        if (key.isEmpty()) return
+        scope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                SecureKeyStore.setAeroKey(context, key)
+            }
+            hasKey = true
+            showKeyDialog = false
+            AeroStore.setEnabled(context, true)
+            pollUsage()
+        }
+    }
+
+    fun clearKey() {
+        scope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                SecureKeyStore.clearAeroKey(context)
+            }
+            hasKey = false
+            AeroStore.setEnabled(context, false)
+        }
+    }
+
+    Surface(
+        shape = GroupSingle,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Real flight times",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = cs.onSurface,
+                    )
+                    Text(
+                        "Show FlightAware's scheduled and actual arrival instead of the " +
+                            "estimated ETA. Uses your feeder's free AeroAPI quota; when it's " +
+                            "off or used up, the widget falls back to the ETA estimate.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = aero.enabled,
+                    enabled = hasKey,
+                    onCheckedChange = ::setEnabled,
+                )
+            }
+
+            if (!hasKey) {
+                Button(
+                    onClick = { showKeyDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Add AeroAPI key")
+                }
+                Text(
+                    "Stored encrypted in this device's keystore — never in the cloud, the " +
+                        "app's backups, or the widget.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = cs.onSurfaceVariant,
+                )
+            } else {
+                // Free-quota meter: the authoritative cost when we have it, else
+                // the local request count as a fallback fill
+                val costFrac = (aero.lastCostUsd?.let { it / AeroStore.BUDGET_USD }
+                    ?: (aero.requestCount.toDouble() / AeroStore.HARD_LIMIT))
+                    .toFloat().coerceIn(0f, 1f)
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = cs.surfaceContainerHighest,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp), Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    aero.lastCostUsd?.let {
+                                        "$%.2f of $%.2f free used"
+                                            .format(it, AeroStore.BUDGET_USD)
+                                    } ?: "Usage not checked yet",
+                                    style = MaterialTheme.typography.titleMediumEmphasized,
+                                    color = cs.onSurface,
+                                )
+                                Text(
+                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests" +
+                                        (aero.lastStatus?.let { " · $it" } ?: ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = cs.onSurfaceVariant,
+                                )
+                            }
+                            FilledTonalIconButton(
+                                onClick = ::pollUsage,
+                                enabled = !checking,
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_sync), "check usage",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                        LinearWavyProgressIndicator(
+                            progress = { costFrac },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (aero.exhausted()) {
+                    Text(
+                        "Monthly free usage used up — paused until next month.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.error,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showKeyDialog = true }) { Text("Replace key") }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = ::clearKey) { Text("Remove key") }
+                }
+            }
+        }
+    }
+
+    if (showKeyDialog) {
+        AeroKeyDialog(onDismiss = { showKeyDialog = false }, onSave = ::saveKey)
+    }
+}
+
+/** Paste-the-key dialog; input is masked and never echoed back. */
+@Composable
+private fun AeroKeyDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(Modifier.padding(24.dp), Arrangement.spacedBy(16.dp)) {
+                Text(
+                    "AeroAPI key",
+                    style = MaterialTheme.typography.titleLargeEmphasized,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Paste your FlightAware AeroAPI key. It is stored encrypted in this " +
+                        "device's Android keystore only.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("x-apikey") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { onSave(text) }, enabled = text.isNotBlank()) {
+                        Text("Save")
+                    }
+                }
             }
         }
     }

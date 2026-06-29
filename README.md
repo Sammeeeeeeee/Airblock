@@ -19,6 +19,10 @@ Built to be **as light as possible** for 24/7 use:
 ## Data sources
 - Live aircraft: [adsb.lol](https://adsb.lol) community ADS-B network (free, no key)
 - Photos: [Planespotters.net](https://www.planespotters.net) public API — © the photographers
+- Real flight times (optional): [FlightAware AeroAPI](https://www.flightaware.com/commercial/aeroapi/) —
+  scheduled/actual arrival in place of the ETA estimate. Opt-in under **Tuning → Flight times**;
+  the key is stored in the Android keystore (never in the repo or APK), and usage is capped to
+  stay inside the feeder's free $10/month allowance, auto-disabling when spent.
 
 ## Build
 Requires Android Studio (or Android SDK 35 + JDK 17). `gradlew assembleDebug`, deploy with

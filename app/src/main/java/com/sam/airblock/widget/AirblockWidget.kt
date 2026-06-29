@@ -518,10 +518,22 @@ private fun RoutePill(state: WidgetState) {
                 contentDescription = "route progress",
                 modifier = GlanceModifier.fillMaxWidth().height(14.dp),
             )
-            // Remaining time, not a clock time: "ETA 14:05" reads as the
-            // phone's timezone while trackers show the DESTINATION's local
-            // arrival — a duration can't be misread either way.
-            state.etaEpochMs?.let { eta ->
+            // Prefer REAL times from AeroAPI ("Arr 14:32 · +18m", in the
+            // destination's local zone so the clock can't be misread). Without
+            // them we fall back to a DURATION ("ETA 1h 20m") — a remaining time
+            // reads the same in any timezone, unlike a guessed clock time.
+            val real = realArrivalLabel(state)
+            if (real != null) {
+                Text(
+                    text = real.first,
+                    style = TextStyle(
+                        fontSize = 10.sp,
+                        color = if (real.second) GlanceTheme.colors.error
+                        else GlanceTheme.colors.onSecondaryContainer,
+                    ),
+                    maxLines = 1,
+                )
+            } else state.etaEpochMs?.let { eta ->
                 val mins = ((eta - System.currentTimeMillis()) / 60_000).toInt()
                 if (mins in 0..(24 * 60)) {
                     Text(
@@ -812,6 +824,43 @@ private fun expressiveText(text: String, color: Int, heightPx: Int, maxWidthPx: 
     val bmp = Bitmap.createBitmap(w.toInt().coerceAtLeast(1), h, Bitmap.Config.ARGB_8888)
     Canvas(bmp).drawText(text, 0f, -fm.ascent, paint)
     return bmp
+}
+
+/**
+ * Real-arrival label for the route pill, or null when no AeroAPI times apply.
+ * Returns the text plus whether the flight is running late (drives the color).
+ * Shows the arrival CLOCK in the destination's local zone when known, and the
+ * delta against schedule; a ±2 min window counts as on time.
+ */
+private fun realArrivalLabel(state: WidgetState): Pair<String, Boolean>? {
+    if (!state.timesAreReal) return null
+    val delay = state.arrDelayMin
+    val late = (delay ?: 0) > 2
+    val clock = state.estArrEpochMs?.let { ms ->
+        state.destTimeZone?.let { tz ->
+            runCatching {
+                java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone(tz)
+                }.format(java.util.Date(ms))
+            }.getOrNull()
+        }
+    }
+    val delta = delay?.let {
+        when {
+            it > 2 -> "+${it}m"
+            it < -2 -> "${it}m" // already carries the minus sign
+            else -> "on time"
+        }
+    }
+    val text = when {
+        clock != null && delta != null -> "Arr $clock · $delta"
+        clock != null -> "Arr $clock"
+        delay != null && delay > 2 -> "Late ${delay}m"
+        delay != null && delay < -2 -> "Early ${-delay}m"
+        delay != null -> "On time"
+        else -> return null
+    }
+    return text to late
 }
 
 /** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */
