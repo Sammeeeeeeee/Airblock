@@ -20,7 +20,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -348,14 +347,33 @@ private fun SettingsScreen(
             )
         } else {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-            // Fixed header — title + console button. Stays put while the
-            // content below pulls down (M3 Expressive: app bar pins, list moves).
+        val ptrState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = widgetState.refreshing,
+            onRefresh = ::refreshNow,
+            state = ptrState,
+            modifier = Modifier.fillMaxSize(),
+            indicator = {
+                // Pinned to the top, below the status bar — it does not scroll
+                // with the page; the content moves under it.
+                PullToRefreshDefaults.LoadingIndicator(
+                    state = ptrState,
+                    isRefreshing = widgetState.refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+                )
+            },
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp),
+        ) {
+            val motion = MaterialTheme.motionScheme
             Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            // Header: title + console button — scrolls with the content
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         "Airblock ✈",
@@ -375,38 +393,7 @@ private fun SettingsScreen(
                     Icon(painterResource(R.drawable.ic_console), "Activity log")
                 }
             }
-            Spacer(Modifier.height(8.dp))
-        val ptrState = rememberPullToRefreshState()
-        PullToRefreshBox(
-            isRefreshing = widgetState.refreshing,
-            onRefresh = ::refreshNow,
-            state = ptrState,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            indicator = {
-                // The M3 Expressive shape-morphing pull indicator, pinned to the
-                // top of the scroll area (just under the fixed header)
-                PullToRefreshDefaults.LoadingIndicator(
-                    state = ptrState,
-                    isRefreshing = widgetState.refreshing,
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
-            },
-        ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp),
-        ) {
-            val motion = MaterialTheme.motionScheme
-            // Pull only the content BELOW the fixed header down while refreshing,
-            // so the indicator has room without the header moving.
-            val pushDown by animateDpAsState(
-                if (widgetState.refreshing) 56.dp else 0.dp,
-                label = "pushDown",
-            )
-            Spacer(Modifier.height(pushDown))
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
 
             // ---- Setup-required banner: a new user must not have to guess
             // what to do — point straight at the permission rows below.
@@ -686,7 +673,6 @@ private fun SettingsScreen(
         }
         }
         }
-        }
     }
 }
 
@@ -871,23 +857,21 @@ private fun FlightTimesCard() {
                     Column(Modifier.padding(16.dp), Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                // Live cost from our own request count (each
-                                // /flights call is $0.005); AeroAPI's own figure
-                                // lags, so reconcile upward only when it's higher.
-                                val usedUsd = maxOf(
-                                    aero.requestCount * AeroStore.PER_QUERY_USD,
-                                    aero.lastCostUsd ?: 0.0,
-                                )
+                                // Primary: FlightAware's own billed figure (note:
+                                // their /account/usage total lags, so this can sit
+                                // at $0.00 for a while after calls).
                                 Text(
-                                    "$%.2f of $%.2f used".format(usedUsd, AeroStore.BUDGET_USD),
+                                    "$%.2f of $%.2f used"
+                                        .format(aero.lastCostUsd ?: 0.0, AeroStore.BUDGET_USD),
                                     style = MaterialTheme.typography.titleMediumEmphasized,
                                     color = cs.onSurface,
                                 )
-                                // Only the request line carries the pace colour
+                                // Secondary, small: our own live estimate (each
+                                // call is $0.005) + the request count, pace-coloured.
                                 Text(
-                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests · " +
-                                        (if (overPace) "over pace" else "on pace") +
-                                        (aero.lastStatus?.let { " · $it" } ?: ""),
+                                    "~$%.2f · %d / %d requests".format(
+                                        aero.requestCount * AeroStore.PER_QUERY_USD,
+                                        aero.requestCount, AeroStore.HARD_LIMIT),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = meterColor,
                                 )
