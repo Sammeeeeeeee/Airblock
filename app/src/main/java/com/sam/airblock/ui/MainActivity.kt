@@ -293,11 +293,24 @@ private fun SettingsScreen(
 
     val widgetState by WidgetStateStore.flow(context)
         .collectAsState(initial = WidgetState())
+    // The engine auto-refreshes every ~15 s, flipping widgetState.refreshing.
+    // The pull-to-refresh indicator must ONLY react to an actual pull, never to
+    // those background ticks — otherwise the loader pops up at the top whatever
+    // the scroll position. So drive it from a local flag set only on pull, and
+    // cleared the moment the engine's refresh finishes.
+    var pullRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(widgetState.refreshing) {
+        if (!widgetState.refreshing) pullRefreshing = false
+    }
     fun refreshNow() {
         scope.launch {
             WidgetStateStore.update(context) { it.copy(refreshing = true) }
             UpdateService.start(context, tickNow = true)
         }
+    }
+    fun onPullRefresh() {
+        pullRefreshing = true
+        refreshNow()
     }
 
     // A radius change only needs a fetch when it could change the ANSWER:
@@ -349,16 +362,18 @@ private fun SettingsScreen(
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         val ptrState = rememberPullToRefreshState()
         PullToRefreshBox(
-            isRefreshing = widgetState.refreshing,
-            onRefresh = ::refreshNow,
+            // Only an actual pull lights the indicator — not the 15 s auto-ticks
+            isRefreshing = pullRefreshing,
+            onRefresh = ::onPullRefresh,
             state = ptrState,
             modifier = Modifier.fillMaxSize(),
             indicator = {
-                // Pinned to the top, below the status bar — it does not scroll
-                // with the page; the content moves under it.
+                // The expressive shape-morphing indicator. It animates from the
+                // pull gesture (state.distanceFraction) and sits pinned at the
+                // top, below the status bar — content scrolls under it.
                 PullToRefreshDefaults.LoadingIndicator(
                     state = ptrState,
-                    isRefreshing = widgetState.refreshing,
+                    isRefreshing = pullRefreshing,
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 )
             },
