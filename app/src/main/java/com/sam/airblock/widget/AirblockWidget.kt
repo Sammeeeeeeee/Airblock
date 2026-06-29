@@ -517,8 +517,10 @@ private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: W
             text = actual,
             style = TextStyle(
                 fontSize = 9.sp,
-                color = if ((delayMin ?: 0) > 2) GlanceTheme.colors.error
-                else ColorProvider(androidx.compose.ui.graphics.Color(0xFF2E7D32)),
+                // Softer than the pill's delay chip — this line is background
+                color = if ((delayMin ?: 0) > 2)
+                    ColorProvider(androidx.compose.ui.graphics.Color(0xFFD0605C))
+                else ColorProvider(androidx.compose.ui.graphics.Color(0xFF5C9E60)),
             ),
             maxLines = 1,
         )
