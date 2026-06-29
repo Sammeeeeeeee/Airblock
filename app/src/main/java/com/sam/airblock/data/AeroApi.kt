@@ -136,9 +136,13 @@ class AeroApi(
         const val BASE = "https://aeroapi.flightaware.com/aeroapi"
 
         /** AeroAPI emits ISO-8601 UTC ("2026-06-29T14:32:00Z"). */
-        fun parseIso(s: String?): Long? = s?.let {
-            runCatching { java.time.Instant.parse(it).toEpochMilli() }
-                .recoverCatching { java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }
+        fun parseIso(s: String?): Long? = s?.let { str ->
+            runCatching { java.time.Instant.parse(str).toEpochMilli() }
+                .recoverCatching {
+                    // recoverCatching's `it` is the Throwable — use the named
+                    // String so we don't accidentally parse the exception
+                    java.time.OffsetDateTime.parse(str).toInstant().toEpochMilli()
+                }
                 .getOrNull()
         }
     }
