@@ -58,17 +58,21 @@ class Ticker(private val context: Context) {
         private set
 
     /** Mutable per-tick checklist, persisted on every transition. */
-    private val stageOrder = listOf("location", "aircraft", "route", "photo", "logos")
+    private val stageOrder =
+        listOf("location", "aircraft", "route", "schedule", "photo", "logos")
     private var stages = linkedMapOf<String, WidgetState.Stage>()
 
-    private fun resetStages() {
+    /** The "schedule" (AeroAPI) step is only listed when the feature is on. */
+    private fun resetStages(includeSchedule: Boolean) {
         stages = linkedMapOf(
             "location" to WidgetState.Stage("location", "Location", WidgetState.Stage.PENDING),
             "aircraft" to WidgetState.Stage("aircraft", "Nearest aircraft", WidgetState.Stage.PENDING),
             "route" to WidgetState.Stage("route", "Route", WidgetState.Stage.PENDING),
-            "photo" to WidgetState.Stage("photo", "Photo", WidgetState.Stage.PENDING),
-            "logos" to WidgetState.Stage("logos", "Logos", WidgetState.Stage.PENDING),
         )
+        if (includeSchedule) stages["schedule"] =
+            WidgetState.Stage("schedule", "Schedule (AeroAPI)", WidgetState.Stage.PENDING)
+        stages["photo"] = WidgetState.Stage("photo", "Photo", WidgetState.Stage.PENDING)
+        stages["logos"] = WidgetState.Stage("logos", "Logos", WidgetState.Stage.PENDING)
     }
 
     private fun stageList() = stageOrder.mapNotNull { stages[it] }
@@ -102,7 +106,8 @@ class Ticker(private val context: Context) {
         // The badge spinner must reflect EVERY refresh (automatic ones too),
         // not just manual taps — flip it on now; every exit path below
         // publishes a state with refreshing=false, so it can't get stuck.
-        resetStages()
+        val aeroOn = AeroStore.read(context).enabled
+        resetStages(includeSchedule = aeroOn)
         setStage("location", WidgetState.Stage.RUNNING, stageText = "Getting location…")
 
         val settings = SettingsStore.read(context)
@@ -210,11 +215,17 @@ class Ticker(private val context: Context) {
                 etaEpochMs = geo.etaEpochMs
                     ?: prev.etaEpochMs.takeIf { sameFlight && leg == null },
                 // Real AeroAPI times persist across ticks of the same flight;
-                // phase 2 fills them in (or refreshes them) when enabled
+                // phase 2 fills them in when enabled. The flight number falls
+                // back to the callsign's numeric part so it shows even with
+                // AeroAPI off (AeroAPI then upgrades it to the IATA number).
+                schedDepEpochMs = prev.schedDepEpochMs.takeIf { sameFlight },
                 schedArrEpochMs = prev.schedArrEpochMs.takeIf { sameFlight },
-                estArrEpochMs = prev.estArrEpochMs.takeIf { sameFlight },
+                actualDepEpochMs = prev.actualDepEpochMs.takeIf { sameFlight },
                 arrDelayMin = prev.arrDelayMin.takeIf { sameFlight },
-                destTimeZone = prev.destTimeZone.takeIf { sameFlight },
+                flightNumber = flightNumberFromCallsign(callsign)
+                    ?: prev.flightNumber.takeIf { sameFlight },
+                schedDepLocal = prev.schedDepLocal.takeIf { sameFlight },
+                schedArrLocal = prev.schedArrLocal.takeIf { sameFlight },
                 timesAreReal = prev.timesAreReal && sameFlight,
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 category = ac.category,
@@ -258,11 +269,18 @@ class Ticker(private val context: Context) {
             // result waits behind a slower sibling.
             kotlinx.coroutines.coroutineScope {
                 launch {
-                    when {
-                        callsign == null -> setStage("route", WidgetState.Stage.DONE,
-                            label = "Route (no callsign)")
-                        routeCached -> setStage("route", WidgetState.Stage.DONE,
-                            cached = true)
+                    // Route from adsb.lol first; whether it yielded a usable
+                    // origin/destination decides if we then call AeroAPI at all.
+                    val routeKnown = when {
+                        callsign == null -> {
+                            setStage("route", WidgetState.Stage.DONE,
+                                label = "Route (no callsign)")
+                            false
+                        }
+                        routeCached -> {
+                            setStage("route", WidgetState.Stage.DONE, cached = true)
+                            (cachedRoute?.second?.airports?.size ?: 0) >= 2
+                        }
                         else -> {
                             setStage("route", WidgetState.Stage.RUNNING)
                             try {
@@ -291,12 +309,18 @@ class Ticker(private val context: Context) {
                                     )
                                 }
                                 setStage("route", WidgetState.Stage.DONE)
+                                (route?.airports?.size ?: 0) >= 2
                             } catch (e: IOException) {
                                 Log.w(TAG, "route lookup failed for $callsign: $e")
                                 setStage("route", WidgetState.Stage.FAILED)
+                                false
                             }
                         }
                     }
+                    // AeroAPI runs ONLY after a successful adsb.lol route — no
+                    // route means we don't bother (and don't spend a request)
+                    if (aeroOn) enrichWithRealTimes(
+                        callsign, prev.timesAreReal && sameFlight, log, routeKnown)
                 }
                 launch {
                     setStage("photo", WidgetState.Stage.RUNNING)
@@ -327,7 +351,6 @@ class Ticker(private val context: Context) {
                     }
                     setStage("logos", WidgetState.Stage.DONE, cached = logosWereCached)
                 }
-                launch { enrichWithRealTimes(callsign, prev.timesAreReal && sameFlight) }
             }
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s".format(
@@ -365,47 +388,105 @@ class Ticker(private val context: Context) {
     }
 
     /**
-     * Real arrival times from AeroAPI — the opt-in upgrade over the geometry
-     * ETA. Strictly bounded: skipped entirely unless the feature is on and
-     * inside its free budget; the billable `/flights` call runs at most once per
-     * distinct flight (cached by callsign, and short-circuited when this tick
-     * already carries real times for the same flight). The free `/account/usage`
-     * endpoint is polled at most every [USAGE_REFRESH_MS] to keep the spend
-     * authoritative and trip the switch off the instant the budget is gone.
+     * Real times from AeroAPI — the opt-in upgrade over the geometry ETA. Called
+     * only after the adsb.lol route resolves: if there is no route ([routeKnown]
+     * false) we don't bother and spend nothing. Otherwise strictly bounded — the
+     * billable `/flights` call runs at most once per distinct flight (cached by
+     * callsign, short-circuited when this tick already carries real times). The
+     * free `/account/usage` endpoint is polled at most every [USAGE_REFRESH_MS]
+     * to keep the spend authoritative and trip the switch off when it's gone.
+     * Drives the "schedule" checklist stage throughout.
      */
-    private suspend fun enrichWithRealTimes(callsign: String?, alreadyReal: Boolean) {
-        if (callsign == null || alreadyReal) return
+    private suspend fun enrichWithRealTimes(
+        callsign: String?, alreadyReal: Boolean, log: Boolean, routeKnown: Boolean,
+    ) {
+        if (!routeKnown || callsign == null) {
+            setStage("schedule", WidgetState.Stage.DONE, label = "Schedule — no route")
+            return
+        }
+        if (alreadyReal) {
+            setStage("schedule", WidgetState.Stage.DONE, cached = true)
+            return
+        }
         var aero = AeroStore.read(context)
-        if (!aero.canQuery()) return
+        if (!aero.canQuery()) {
+            setStage("schedule", WidgetState.Stage.DONE,
+                label = if (aero.exhausted()) "Schedule — quota used" else "Schedule — off")
+            return
+        }
+        setStage("schedule", WidgetState.Stage.RUNNING)
         try {
             if (System.currentTimeMillis() - aero.lastCheckedMs > USAGE_REFRESH_MS) {
                 runCatching { aeroApi.usageCostUsd() }
                     .onSuccess { AeroStore.recordUsage(context, it, "Auto-checked") }
                 aero = AeroStore.read(context)
-                if (!aero.canQuery()) return
+                if (!aero.canQuery()) {
+                    setStage("schedule", WidgetState.Stage.DONE, label = "Schedule — quota used")
+                    return
+                }
             }
-            val times: AeroTimes? = if (cachedAero?.first == callsign) {
+            val cachedHit = cachedAero?.first == callsign
+            val times: AeroTimes? = if (cachedHit) {
                 cachedAero?.second
             } else {
                 // Count the billable query BEFORE the call so a crash mid-flight
                 // can never let us slip past the cap; a hit returns false → stop
-                if (!AeroStore.recordRequest(context)) return
+                if (!AeroStore.recordRequest(context)) {
+                    setStage("schedule", WidgetState.Stage.DONE, label = "Schedule — quota used")
+                    return
+                }
                 aeroApi.times(callsign).also { cachedAero = callsign to it }
             }
             if (times != null) {
+                val depLocal = formatLocal(times.schedDepMs, times.originTimeZone)
+                val arrLocal = formatLocal(times.schedArrMs, times.destTimeZone)
                 updateAndRender { st ->
                     st.copy(
-                        schedArrEpochMs = times.scheduledArrivalMs ?: st.schedArrEpochMs,
-                        estArrEpochMs = times.estimatedArrivalMs ?: st.estArrEpochMs,
+                        schedDepEpochMs = times.schedDepMs ?: st.schedDepEpochMs,
+                        schedArrEpochMs = times.schedArrMs ?: st.schedArrEpochMs,
+                        actualDepEpochMs = times.actualDepMs ?: st.actualDepEpochMs,
                         arrDelayMin = times.arrivalDelayMin ?: st.arrDelayMin,
-                        destTimeZone = times.destTimeZone ?: st.destTimeZone,
+                        flightNumber = times.flightNumber ?: st.flightNumber,
+                        schedDepLocal = depLocal ?: st.schedDepLocal,
+                        schedArrLocal = arrLocal ?: st.schedArrLocal,
                         timesAreReal = true,
                     )
                 }
             }
+            // Activity-log line for the AeroAPI step (only on a billable call)
+            if (log && !cachedHit) {
+                val n = AeroStore.read(context).requestCount
+                val delayLabel = times?.arrivalDelayMin?.let {
+                    when { it > 2 -> "late ${it}m"; it < -2 -> "early ${-it}m"; else -> "on time" }
+                } ?: "no schedule"
+                EventLog.append(context,
+                    "AeroAPI — ${times?.flightNumber ?: callsign}: $delayLabel " +
+                        "(request $n/${AeroStore.HARD_LIMIT})")
+            }
+            setStage("schedule", WidgetState.Stage.DONE, cached = cachedHit)
         } catch (e: IOException) {
             Log.w(TAG, "aero times failed for $callsign: $e")
+            setStage("schedule", WidgetState.Stage.FAILED)
+            if (log) EventLog.append(context, "AeroAPI FAILED — $callsign: ${e.message}")
         }
+    }
+
+    /** "BAW117" -> "117"; the callsign's flight-number part, or null. */
+    private fun flightNumberFromCallsign(cs: String?): String? {
+        if (cs == null) return null
+        val i = cs.indexOfFirst { it.isDigit() }
+        return if (i in 1 until cs.length) cs.substring(i).trim().ifEmpty { null } else null
+    }
+
+    /** Format an epoch in a given IANA zone as "HH:mm" (UTC if zone unknown). */
+    private fun formatLocal(ms: Long?, tz: String?): String? {
+        if (ms == null) return null
+        return runCatching {
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).apply {
+                timeZone = tz?.let { java.util.TimeZone.getTimeZone(it) }
+                    ?: java.util.TimeZone.getTimeZone("UTC")
+            }.format(java.util.Date(ms))
+        }.getOrNull()
     }
 
     private data class LegGeometry(val progress: Float? = null, val etaEpochMs: Long? = null)

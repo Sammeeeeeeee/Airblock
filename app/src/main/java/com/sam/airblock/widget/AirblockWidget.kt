@@ -364,48 +364,71 @@ private fun AircraftCard(
                         }
                     }
                 }
-                // The operating airline, quietly under the type — with the
-                // tag badge right-aligned on the same row (moved off the
-                // callsign row, where long tags were getting clipped)
-                val badge = state.alertTag ?: state.specialType
-                if (state.airlineName != null || badge != null) {
-                    Row(
-                        modifier = GlanceModifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                // The operating airline (bold) with the flight number beside it
+                // in lighter weight — same line, told apart by weight/colour
+                // alone, no extra chrome.
+                if (state.airlineName != null || state.flightNumber != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         state.airlineName?.let { airline ->
                             Text(
                                 text = airline,
+                                style = TextStyle(fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.onBg),
+                                maxLines = 1,
+                            )
+                        }
+                        state.flightNumber?.let { fn ->
+                            if (state.airlineName != null) Spacer(GlanceModifier.width(4.dp))
+                            Text(
+                                text = fn,
                                 style = TextStyle(fontSize = 10.sp,
                                     color = palette.onBgVariant),
                                 maxLines = 1,
                             )
                         }
-                        Spacer(GlanceModifier.defaultWeight())
-                        badge?.let { tag ->
-                            Row(
-                                modifier = GlanceModifier
-                                    .background(GlanceTheme.colors.error)
-                                    .cornerRadius(12.dp)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Image(
-                                    provider = ImageProvider(R.drawable.ic_shield),
-                                    contentDescription = tag,
-                                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
-                                    modifier = GlanceModifier.size(9.dp),
-                                )
-                                Spacer(GlanceModifier.width(3.dp))
-                                Text(
-                                    text = tag.uppercase(),
-                                    style = TextStyle(fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = GlanceTheme.colors.onError),
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                    }
+                }
+                // Scheduled departure–arrival, quiet and italic: the booked
+                // times, distinct from the live progress shown in the route pill
+                state.schedDepLocal?.let { dep ->
+                    Text(
+                        text = dep + (state.schedArrLocal?.let { " – $it" } ?: ""),
+                        style = TextStyle(
+                            fontSize = 9.sp,
+                            fontStyle = androidx.glance.text.FontStyle.Italic,
+                            color = palette.onBgVariant,
+                        ),
+                        maxLines = 1,
+                    )
+                }
+                // Special-aircraft tag (military, police…): left-aligned, flush
+                // with the title column's left edge, directly under the type —
+                // it used to float at the far right, reading as detached
+                val badge = state.alertTag ?: state.specialType
+                badge?.let { tag ->
+                    Spacer(GlanceModifier.height(3.dp))
+                    Row(
+                        modifier = GlanceModifier
+                            .background(GlanceTheme.colors.error)
+                            .cornerRadius(12.dp)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Image(
+                            provider = ImageProvider(R.drawable.ic_shield),
+                            contentDescription = tag,
+                            colorFilter = ColorFilter.tint(GlanceTheme.colors.onError),
+                            modifier = GlanceModifier.size(9.dp),
+                        )
+                        Spacer(GlanceModifier.width(3.dp))
+                        Text(
+                            text = tag.uppercase(),
+                            style = TextStyle(fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GlanceTheme.colors.onError),
+                            maxLines = 1,
+                        )
                     }
                 }
             }
@@ -518,21 +541,35 @@ private fun RoutePill(state: WidgetState) {
                 contentDescription = "route progress",
                 modifier = GlanceModifier.fillMaxWidth().height(14.dp),
             )
-            // Prefer REAL times from AeroAPI ("Arr 14:32 · +18m", in the
-            // destination's local zone so the clock can't be misread). Without
-            // them we fall back to a DURATION ("ETA 1h 20m") — a remaining time
-            // reads the same in any timezone, unlike a guessed clock time.
-            val real = realArrivalLabel(state)
-            if (real != null) {
-                Text(
-                    text = real.first,
-                    style = TextStyle(
-                        fontSize = 10.sp,
-                        color = if (real.second) GlanceTheme.colors.error
-                        else GlanceTheme.colors.onSecondaryContainer,
-                    ),
-                    maxLines = 1,
-                )
+            // Real times from AeroAPI: elapsed-since-departure / total
+            // scheduled duration ("00:25/03:12"), with the arrival delay beside
+            // it — red when late, green when early. Falls back to the geometry
+            // ETA duration when AeroAPI isn't on.
+            val flown = elapsedOverTotal(state)
+            if (flown != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = flown,
+                        style = TextStyle(fontSize = 10.sp,
+                            color = GlanceTheme.colors.onSecondaryContainer),
+                        maxLines = 1,
+                    )
+                    state.arrDelayMin?.let { d ->
+                        if (d in -1..1) return@let
+                        Spacer(GlanceModifier.width(4.dp))
+                        Text(
+                            text = if (d > 0) "+$d" else "$d",
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (d > 0) GlanceTheme.colors.error
+                                else ColorProvider(
+                                    androidx.compose.ui.graphics.Color(0xFF2E7D32)),
+                            ),
+                            maxLines = 1,
+                        )
+                    }
+                }
             } else state.etaEpochMs?.let { eta ->
                 val mins = ((eta - System.currentTimeMillis()) / 60_000).toInt()
                 if (mins in 0..(24 * 60)) {
@@ -679,8 +716,10 @@ private fun Endpoint(
             ),
         )
         city?.let {
+            // Cap the width so a long city name can't squeeze the progress bar
+            // in the middle — clip the name instead of cropping the bar.
             Text(
-                text = it,
+                text = if (it.length > 12) it.take(11).trimEnd() + "…" else it,
                 style = TextStyle(fontSize = 10.sp,
                     color = GlanceTheme.colors.onSecondaryContainer),
                 maxLines = 1,
@@ -827,40 +866,24 @@ private fun expressiveText(text: String, color: Int, heightPx: Int, maxWidthPx: 
 }
 
 /**
- * Real-arrival label for the route pill, or null when no AeroAPI times apply.
- * Returns the text plus whether the flight is running late (drives the color).
- * Shows the arrival CLOCK in the destination's local zone when known, and the
- * delta against schedule; a ±2 min window counts as on time.
+ * Elapsed-since-departure / total-scheduled-duration for the route pill
+ * ("00:25/03:12"), or null when AeroAPI times don't apply. Elapsed counts from
+ * the actual departure (estimated, then scheduled, as fallbacks); total is the
+ * scheduled gate-to-gate duration. Total is omitted if unknown.
  */
-private fun realArrivalLabel(state: WidgetState): Pair<String, Boolean>? {
+private fun elapsedOverTotal(state: WidgetState): String? {
     if (!state.timesAreReal) return null
-    val delay = state.arrDelayMin
-    val late = (delay ?: 0) > 2
-    val clock = state.estArrEpochMs?.let { ms ->
-        state.destTimeZone?.let { tz ->
-            runCatching {
-                java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).apply {
-                    timeZone = java.util.TimeZone.getTimeZone(tz)
-                }.format(java.util.Date(ms))
-            }.getOrNull()
-        }
-    }
-    val delta = delay?.let {
-        when {
-            it > 2 -> "+${it}m"
-            it < -2 -> "${it}m" // already carries the minus sign
-            else -> "on time"
-        }
-    }
-    val text = when {
-        clock != null && delta != null -> "Arr $clock · $delta"
-        clock != null -> "Arr $clock"
-        delay != null && delay > 2 -> "Late ${delay}m"
-        delay != null && delay < -2 -> "Early ${-delay}m"
-        delay != null -> "On time"
-        else -> return null
-    }
-    return text to late
+    val dep = state.actualDepEpochMs ?: state.schedDepEpochMs ?: return null
+    val elapsed = hhmm((System.currentTimeMillis() - dep).coerceAtLeast(0))
+    val total = if (state.schedDepEpochMs != null && state.schedArrEpochMs != null)
+        state.schedArrEpochMs - state.schedDepEpochMs else null
+    return if (total != null && total > 0) "$elapsed/${hhmm(total)}" else elapsed
+}
+
+/** Milliseconds as zero-padded "HH:mm". */
+private fun hhmm(ms: Long): String {
+    val m = (ms / 60_000).toInt()
+    return "%02d:%02d".format(m / 60, m % 60)
 }
 
 /** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */

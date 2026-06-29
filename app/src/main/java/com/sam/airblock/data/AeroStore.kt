@@ -58,8 +58,8 @@ object AeroStore {
     const val BUDGET_USD = 10.0
     /** Per-query cost of GET /flights/{ident}. */
     const val PER_QUERY_USD = 0.005
-    /** Local safety cap on billable queries/month, kept under $10 ÷ $0.005. */
-    const val HARD_LIMIT = 1800
+    /** Local safety cap on billable queries/month (≈ the $10 ÷ $0.005 = 2000). */
+    const val HARD_LIMIT = 1900
 
     private val ENABLED = booleanPreferencesKey("aero_enabled")
     private val COUNT = intPreferencesKey("aero_req_count")

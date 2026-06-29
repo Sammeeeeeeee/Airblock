@@ -20,6 +20,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -154,8 +155,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Opening the app is a foreground context — always allowed to (re)start the engine
-        UpdateService.start(this, tickNow = true)
+        // (Re)start the engine so refreshes resume, but do NOT force a tick:
+        // opening the app — e.g. tapping the photo/route on the widget — should
+        // not itself trigger a fetch. Only the widget's refresh tap, the in-app
+        // refresh button and pull-to-refresh request new data.
+        UpdateService.start(this, tickNow = false)
         lifecycle.coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (SettingsStore.read(this@MainActivity).logEnabled)
                 EventLog.append(this@MainActivity, "app opened")
@@ -368,6 +372,13 @@ private fun SettingsScreen(
                 .padding(horizontal = 16.dp),
         ) {
             val motion = MaterialTheme.motionScheme
+            // While refreshing, push the whole page down to make room for the
+            // pull indicator instead of letting it float over static content.
+            val pushDown by animateDpAsState(
+                if (widgetState.refreshing) 56.dp else 0.dp,
+                label = "pushDown",
+            )
+            Spacer(Modifier.height(pushDown))
             Spacer(Modifier.height(12.dp))
             // Header: the title and the console button on ONE aligned row
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -833,10 +844,18 @@ private fun FlightTimesCard() {
                     color = cs.onSurfaceVariant,
                 )
             } else {
-                // Free-quota meter: the authoritative cost when we have it, else
-                // the local request count as a fallback fill
-                val costFrac = (aero.lastCostUsd?.let { it / AeroStore.BUDGET_USD }
-                    ?: (aero.requestCount.toDouble() / AeroStore.HARD_LIMIT))
+                // Pace-based quota meter: GREEN while on or ahead of the even
+                // monthly burn rate, RED once the current rate is projected to
+                // exhaust the allowance before the month ends (or it's spent).
+                val cal = java.util.Calendar.getInstance(
+                    java.util.TimeZone.getTimeZone("UTC"))
+                val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+                val elapsedFrac = ((cal.get(java.util.Calendar.DAY_OF_MONTH) - 1) +
+                    cal.get(java.util.Calendar.HOUR_OF_DAY) / 24.0) / daysInMonth
+                val overPace = aero.exhausted() ||
+                    aero.requestCount > AeroStore.HARD_LIMIT * elapsedFrac
+                val meterColor = if (overPace) cs.error else Color(0xFF2E7D32)
+                val countFrac = (aero.requestCount.toDouble() / AeroStore.HARD_LIMIT)
                     .toFloat().coerceIn(0f, 1f)
                 Surface(
                     shape = RoundedCornerShape(18.dp),
@@ -847,15 +866,15 @@ private fun FlightTimesCard() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    aero.lastCostUsd?.let {
-                                        "$%.2f of $%.2f free used"
-                                            .format(it, AeroStore.BUDGET_USD)
-                                    } ?: "Usage not checked yet",
+                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests",
                                     style = MaterialTheme.typography.titleMediumEmphasized,
-                                    color = cs.onSurface,
+                                    color = meterColor,
                                 )
                                 Text(
-                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests" +
+                                    (aero.lastCostUsd?.let {
+                                        "$%.2f of $%.2f used".format(it, AeroStore.BUDGET_USD)
+                                    } ?: "usage not checked") +
+                                        " · " + (if (overPace) "over pace" else "on pace") +
                                         (aero.lastStatus?.let { " · $it" } ?: ""),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = cs.onSurfaceVariant,
@@ -873,7 +892,8 @@ private fun FlightTimesCard() {
                             }
                         }
                         LinearWavyProgressIndicator(
-                            progress = { costFrac },
+                            progress = { countFrac },
+                            color = meterColor,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

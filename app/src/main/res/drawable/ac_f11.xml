@@ -3,6 +3,22 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="200" android:viewportHeight="200">
-    <path android:fillColor="@android:color/white" android:pathData="M 123.755 148.558 L 144.86 64.556" />
-    <path android:fillColor="@android:color/white" android:pathData="M 55.144 64.298 L 76.249 148.3" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M150,65.49C150,93.761 127.614,116.68 100,116.68C72.386,116.68 50,93.761 50,65.49C50,37.219 72.386,14.3 100,14.3C127.614,14.3 150,37.219 150,65.49Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M71.43,143C71.43,143 128.574,143 128.574,143C128.574,143 128.574,185.9 128.574,185.9C128.574,185.9 71.43,185.9 71.43,185.9Z" />
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M123.755,148.558C123.755,148.558 144.86,64.556 144.86,64.556" />
+    <path
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M76.249,148.3C76.249,148.3 55.144,64.298 55.144,64.298" />
 </vector>
