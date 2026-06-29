@@ -28,7 +28,8 @@ data class AeroFlight(
     @SerialName("scheduled_in") val scheduledIn: String? = null,
     @SerialName("estimated_in") val estimatedIn: String? = null,
     @SerialName("actual_in") val actualIn: String? = null,
-    /** Arrival delay vs schedule, in SECONDS (negative = early). */
+    /** Departure / arrival delay vs schedule, in SECONDS (negative = early). */
+    @SerialName("departure_delay") val departureDelay: Int? = null,
     @SerialName("arrival_delay") val arrivalDelay: Int? = null,
     @SerialName("progress_percent") val progressPercent: Int? = null,
     val origin: AeroAirport? = null,
@@ -62,6 +63,9 @@ data class AeroTimes(
     val schedDepMs: Long?,
     val actualDepMs: Long?,
     val schedArrMs: Long?,
+    /** Estimated — or actual once landed — gate arrival. */
+    val estArrMs: Long?,
+    val departureDelayMin: Int?,
     val arrivalDelayMin: Int?,
     val originTimeZone: String?,
     val destTimeZone: String?,
@@ -101,6 +105,8 @@ class AeroApi(
                 schedDepMs = parseIso(flight.scheduledOut),
                 actualDepMs = parseIso(flight.actualOut ?: flight.estimatedOut),
                 schedArrMs = parseIso(flight.scheduledIn),
+                estArrMs = parseIso(flight.actualIn ?: flight.estimatedIn),
+                departureDelayMin = flight.departureDelay?.let { it / 60 },
                 arrivalDelayMin = flight.arrivalDelay?.let { it / 60 },
                 originTimeZone = flight.origin?.timezone,
                 destTimeZone = flight.destination?.timezone,

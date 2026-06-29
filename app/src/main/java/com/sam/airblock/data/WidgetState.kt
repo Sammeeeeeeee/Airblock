@@ -37,13 +37,17 @@ data class WidgetState(
     val schedArrEpochMs: Long? = null,
     /** Actual (or estimated) gate departure (epoch ms) — drives elapsed time. */
     val actualDepEpochMs: Long? = null,
-    /** Arrival delay vs schedule, in minutes (negative = early). */
+    /** Departure / arrival delay vs schedule, in minutes (negative = early). */
+    val depDelayMin: Int? = null,
     val arrDelayMin: Int? = null,
     /** Flight number (e.g. "BA117"), shown beside the airline. */
     val flightNumber: String? = null,
     /** Scheduled dep/arr pre-formatted in each airport's local time ("11:14"). */
     val schedDepLocal: String? = null,
     val schedArrLocal: String? = null,
+    /** Actual/estimated dep/arr local time — shown when it differs from sched. */
+    val actualDepLocal: String? = null,
+    val actualArrLocal: String? = null,
     /** True when the times above came from AeroAPI (not the ETA estimate). */
     val timesAreReal: Boolean = false,
     /** Non-standard aircraft type ("Military", "Helicopter", …) or null. */
@@ -121,7 +125,8 @@ data class WidgetState(
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
         manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
-        timesAreReal, arrDelayMin, flightNumber, schedDepLocal, schedArrLocal,
+        timesAreReal, depDelayMin, arrDelayMin, flightNumber,
+        schedDepLocal, schedArrLocal, actualDepLocal, actualArrLocal,
         actualDepEpochMs?.let { it / 60_000 },
         specialType, category, alertTag, alertCategory, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,

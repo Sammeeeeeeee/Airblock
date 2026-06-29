@@ -440,15 +440,22 @@ class Ticker(private val context: Context) {
             if (times != null) {
                 val depLocal = formatLocal(times.schedDepMs, times.originTimeZone)
                 val arrLocal = formatLocal(times.schedArrMs, times.destTimeZone)
+                val actDepLocal = formatLocal(times.actualDepMs, times.originTimeZone)
+                val actArrLocal = formatLocal(times.estArrMs, times.destTimeZone)
                 updateAndRender { st ->
                     st.copy(
                         schedDepEpochMs = times.schedDepMs ?: st.schedDepEpochMs,
                         schedArrEpochMs = times.schedArrMs ?: st.schedArrEpochMs,
                         actualDepEpochMs = times.actualDepMs ?: st.actualDepEpochMs,
+                        depDelayMin = times.departureDelayMin ?: st.depDelayMin,
                         arrDelayMin = times.arrivalDelayMin ?: st.arrDelayMin,
-                        flightNumber = times.flightNumber ?: st.flightNumber,
+                        // Prefer the callsign-derived IATA number (always
+                        // present); AeroAPI only fills it in when we couldn't
+                        flightNumber = st.flightNumber ?: times.flightNumber,
                         schedDepLocal = depLocal ?: st.schedDepLocal,
                         schedArrLocal = arrLocal ?: st.schedArrLocal,
+                        actualDepLocal = actDepLocal ?: st.actualDepLocal,
+                        actualArrLocal = actArrLocal ?: st.actualArrLocal,
                         timesAreReal = true,
                     )
                 }
@@ -471,11 +478,16 @@ class Ticker(private val context: Context) {
         }
     }
 
-    /** "BAW117" -> "117"; the callsign's flight-number part, or null. */
+    /**
+     * Callsign → IATA flight number from the local airline table: "BAW813C" →
+     * "BA813" (IATA designator + the numeric core, dropping any ATC suffix).
+     * Falls back to the bare digits when the airline isn't known.
+     */
     private fun flightNumberFromCallsign(cs: String?): String? {
         if (cs == null) return null
-        val i = cs.indexOfFirst { it.isDigit() }
-        return if (i in 1 until cs.length) cs.substring(i).trim().ifEmpty { null } else null
+        val digits = cs.dropWhile { !it.isDigit() }.takeWhile { it.isDigit() }
+        if (digits.isEmpty()) return null
+        return (AirlineCodes.iataForCallsign(cs) ?: "") + digits
     }
 
     /** Format an epoch in a given IANA zone as "HH:mm" (UTC if zone unknown). */

@@ -43,8 +43,10 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
 import androidx.glance.layout.width
+import androidx.glance.text.FontStyle
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
+import androidx.glance.text.TextDecoration
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.sam.airblock.R
@@ -364,16 +366,15 @@ private fun AircraftCard(
                         }
                     }
                 }
-                // The operating airline (bold) with the flight number beside it
-                // in lighter weight — same line, told apart by weight/colour
-                // alone, no extra chrome.
+                // The operating airline (medium weight) with the flight number
+                // beside it lighter — told apart by weight/colour, no chrome.
                 if (state.airlineName != null || state.flightNumber != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         state.airlineName?.let { airline ->
                             Text(
                                 text = airline,
                                 style = TextStyle(fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.Medium,
                                     color = palette.onBg),
                                 maxLines = 1,
                             )
@@ -389,19 +390,10 @@ private fun AircraftCard(
                         }
                     }
                 }
-                // Scheduled departure–arrival, quiet and italic: the booked
-                // times, distinct from the live progress shown in the route pill
-                state.schedDepLocal?.let { dep ->
-                    Text(
-                        text = dep + (state.schedArrLocal?.let { " – $it" } ?: ""),
-                        style = TextStyle(
-                            fontSize = 9.sp,
-                            fontStyle = androidx.glance.text.FontStyle.Italic,
-                            color = palette.onBgVariant,
-                        ),
-                        maxLines = 1,
-                    )
-                }
+                // Scheduled dep–arr times, faded italic. Where the actual differs
+                // the scheduled is struck through and the actual shown next to it,
+                // green when on time/early, red when late.
+                ScheduleTimesRow(state, palette)
                 // Special-aircraft tag (military, police…): left-aligned, flush
                 // with the title column's left edge, directly under the type —
                 // it used to float at the far right, reading as detached
@@ -487,6 +479,58 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
             Spacer(GlanceModifier.width(6.dp))
             AirlineLogoBadge(logo)
         }
+    }
+}
+
+/**
+ * Scheduled departure–arrival, faded italic. When a leg's actual/estimated time
+ * differs from schedule, the scheduled value is struck through and the actual is
+ * shown beside it — green when early/on time, red when late. Deliberately quiet:
+ * it sits in the background, under the airline line.
+ */
+@Composable
+private fun ScheduleTimesRow(state: WidgetState, palette: WidgetPalette) {
+    val schedDep = state.schedDepLocal ?: return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TimeChunk(schedDep, state.actualDepLocal, state.depDelayMin, palette)
+        Text(
+            text = " – ",
+            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
+                color = palette.onBgVariant),
+            maxLines = 1,
+        )
+        state.schedArrLocal?.let {
+            TimeChunk(it, state.actualArrLocal, state.arrDelayMin, palette)
+        }
+    }
+}
+
+@Composable
+private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: WidgetPalette) {
+    if (actual != null && actual != sched) {
+        Text(
+            text = sched,
+            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
+                textDecoration = TextDecoration.LineThrough, color = palette.onBgVariant),
+            maxLines = 1,
+        )
+        Spacer(GlanceModifier.width(3.dp))
+        Text(
+            text = actual,
+            style = TextStyle(
+                fontSize = 9.sp, fontStyle = FontStyle.Italic,
+                color = if ((delayMin ?: 0) > 2) GlanceTheme.colors.error
+                else ColorProvider(androidx.compose.ui.graphics.Color(0xFF2E7D32)),
+            ),
+            maxLines = 1,
+        )
+    } else {
+        Text(
+            text = sched,
+            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
+                color = palette.onBgVariant),
+            maxLines = 1,
+        )
     }
 }
 
