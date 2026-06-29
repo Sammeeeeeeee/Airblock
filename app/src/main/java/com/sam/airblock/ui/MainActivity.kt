@@ -866,18 +866,19 @@ private fun FlightTimesCard() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests",
-                                    style = MaterialTheme.typography.titleMediumEmphasized,
-                                    color = meterColor,
-                                )
-                                Text(
-                                    (aero.lastCostUsd?.let {
+                                    aero.lastCostUsd?.let {
                                         "$%.2f of $%.2f used".format(it, AeroStore.BUDGET_USD)
-                                    } ?: "usage not checked") +
-                                        " · " + (if (overPace) "over pace" else "on pace") +
+                                    } ?: "Usage not checked yet",
+                                    style = MaterialTheme.typography.titleMediumEmphasized,
+                                    color = cs.onSurface,
+                                )
+                                // Only the request line carries the pace colour
+                                Text(
+                                    "${aero.requestCount} / ${AeroStore.HARD_LIMIT} requests · " +
+                                        (if (overPace) "over pace" else "on pace") +
                                         (aero.lastStatus?.let { " · $it" } ?: ""),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = cs.onSurfaceVariant,
+                                    color = meterColor,
                                 )
                             }
                             FilledTonalIconButton(
