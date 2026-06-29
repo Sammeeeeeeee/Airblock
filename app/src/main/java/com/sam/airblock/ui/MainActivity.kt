@@ -348,40 +348,14 @@ private fun SettingsScreen(
             )
         } else {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        val ptrState = rememberPullToRefreshState()
-        PullToRefreshBox(
-            isRefreshing = widgetState.refreshing,
-            onRefresh = ::refreshNow,
-            state = ptrState,
-            modifier = Modifier.fillMaxSize(),
-            indicator = {
-                // The M3 Expressive shape-morphing pull indicator, not the
-                // legacy circular arrow
-                PullToRefreshDefaults.LoadingIndicator(
-                    state = ptrState,
-                    isRefreshing = widgetState.refreshing,
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
-            },
-        ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp),
-        ) {
-            val motion = MaterialTheme.motionScheme
-            // While refreshing, push the whole page down to make room for the
-            // pull indicator instead of letting it float over static content.
-            val pushDown by animateDpAsState(
-                if (widgetState.refreshing) 56.dp else 0.dp,
-                label = "pushDown",
-            )
-            Spacer(Modifier.height(pushDown))
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+            // Fixed header — title + console button. Stays put while the
+            // content below pulls down (M3 Expressive: app bar pins, list moves).
             Spacer(Modifier.height(12.dp))
-            // Header: the title and the console button on ONE aligned row
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         "Airblock ✈",
@@ -401,7 +375,38 @@ private fun SettingsScreen(
                     Icon(painterResource(R.drawable.ic_console), "Activity log")
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
+        val ptrState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = widgetState.refreshing,
+            onRefresh = ::refreshNow,
+            state = ptrState,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            indicator = {
+                // The M3 Expressive shape-morphing pull indicator, pinned to the
+                // top of the scroll area (just under the fixed header)
+                PullToRefreshDefaults.LoadingIndicator(
+                    state = ptrState,
+                    isRefreshing = widgetState.refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            },
+        ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 16.dp),
+        ) {
+            val motion = MaterialTheme.motionScheme
+            // Pull only the content BELOW the fixed header down while refreshing,
+            // so the indicator has room without the header moving.
+            val pushDown by animateDpAsState(
+                if (widgetState.refreshing) 56.dp else 0.dp,
+                label = "pushDown",
+            )
+            Spacer(Modifier.height(pushDown))
+            Spacer(Modifier.height(8.dp))
 
             // ---- Setup-required banner: a new user must not have to guess
             // what to do — point straight at the permission rows below.
@@ -681,6 +686,7 @@ private fun SettingsScreen(
         }
         }
         }
+        }
     }
 }
 
@@ -865,10 +871,15 @@ private fun FlightTimesCard() {
                     Column(Modifier.padding(16.dp), Arrangement.spacedBy(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
+                                // Live cost from our own request count (each
+                                // /flights call is $0.005); AeroAPI's own figure
+                                // lags, so reconcile upward only when it's higher.
+                                val usedUsd = maxOf(
+                                    aero.requestCount * AeroStore.PER_QUERY_USD,
+                                    aero.lastCostUsd ?: 0.0,
+                                )
                                 Text(
-                                    aero.lastCostUsd?.let {
-                                        "$%.2f of $%.2f used".format(it, AeroStore.BUDGET_USD)
-                                    } ?: "Usage not checked yet",
+                                    "$%.2f of $%.2f used".format(usedUsd, AeroStore.BUDGET_USD),
                                     style = MaterialTheme.typography.titleMediumEmphasized,
                                     color = cs.onSurface,
                                 )

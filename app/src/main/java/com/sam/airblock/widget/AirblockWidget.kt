@@ -43,7 +43,6 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
 import androidx.glance.layout.width
-import androidx.glance.text.FontStyle
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextDecoration
@@ -495,8 +494,7 @@ private fun ScheduleTimesRow(state: WidgetState, palette: WidgetPalette) {
         TimeChunk(schedDep, state.actualDepLocal, state.depDelayMin, palette)
         Text(
             text = " – ",
-            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
-                color = palette.onBgVariant),
+            style = TextStyle(fontSize = 9.sp, color = palette.onBgVariant),
             maxLines = 1,
         )
         state.schedArrLocal?.let {
@@ -510,7 +508,7 @@ private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: W
     if (actual != null && actual != sched) {
         Text(
             text = sched,
-            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
+            style = TextStyle(fontSize = 9.sp,
                 textDecoration = TextDecoration.LineThrough, color = palette.onBgVariant),
             maxLines = 1,
         )
@@ -518,7 +516,7 @@ private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: W
         Text(
             text = actual,
             style = TextStyle(
-                fontSize = 9.sp, fontStyle = FontStyle.Italic,
+                fontSize = 9.sp,
                 color = if ((delayMin ?: 0) > 2) GlanceTheme.colors.error
                 else ColorProvider(androidx.compose.ui.graphics.Color(0xFF2E7D32)),
             ),
@@ -527,8 +525,7 @@ private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: W
     } else {
         Text(
             text = sched,
-            style = TextStyle(fontSize = 9.sp, fontStyle = FontStyle.Italic,
-                color = palette.onBgVariant),
+            style = TextStyle(fontSize = 9.sp, color = palette.onBgVariant),
             maxLines = 1,
         )
     }
