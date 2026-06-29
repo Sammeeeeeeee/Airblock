@@ -29,6 +29,20 @@ data class WidgetState(
     val routeProgress: Float? = null,
     /** Estimated arrival at destination (epoch ms), from distance/speed. */
     val etaEpochMs: Long? = null,
+    // ---- Real scheduled/actual times from FlightAware AeroAPI (opt-in). When
+    // [timesAreReal] is true the widget shows these instead of the geometry ETA;
+    // when the feature is off or out of free quota they stay null and the ETA
+    // guess above is used.
+    /** Scheduled gate arrival (epoch ms). */
+    val schedArrEpochMs: Long? = null,
+    /** Estimated — or actual, once landed — gate arrival (epoch ms). */
+    val estArrEpochMs: Long? = null,
+    /** Arrival delay vs schedule, in minutes (negative = early). */
+    val arrDelayMin: Int? = null,
+    /** Destination IANA time zone, for showing arrival in local time. */
+    val destTimeZone: String? = null,
+    /** True when the times above came from AeroAPI (not the ETA estimate). */
+    val timesAreReal: Boolean = false,
     /** Non-standard aircraft type ("Military", "Helicopter", …) or null. */
     val specialType: String? = null,
     /** ADS-B emitter category ("A3", "A7"…) — drives the silhouette fallback. */
@@ -104,6 +118,7 @@ data class WidgetState(
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
         manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
+        timesAreReal, arrDelayMin, estArrEpochMs?.let { it / 60_000 },
         specialType, category, alertTag, alertCategory, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")

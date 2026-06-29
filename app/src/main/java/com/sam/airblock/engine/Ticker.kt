@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
+import com.sam.airblock.data.AeroApi
+import com.sam.airblock.data.AeroStore
+import com.sam.airblock.data.AeroTimes
 import com.sam.airblock.data.AirlineLogoRepo
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.ManufacturerLogoRepo
@@ -43,9 +46,13 @@ class Ticker(private val context: Context) {
     private val planeAlerts = PlaneAlertRepo(context)
     private val gates = Gates(context)
     private val api = AdsbApi()
+    private val aeroApi = AeroApi(context)
 
     // Per-flight caches: one route lookup per callsign, one photo per hex
     private var cachedRoute: Pair<String, RouteResult?>? = null
+    // One AeroAPI times lookup per callsign — the billable call is made at most
+    // once per distinct flight (see also the timesAreReal guard below)
+    private var cachedAero: Pair<String, AeroTimes?>? = null
 
     var consecutiveErrors = 0
         private set
@@ -202,6 +209,13 @@ class Ticker(private val context: Context) {
                     ?: prev.routeProgress.takeIf { sameFlight && leg == null },
                 etaEpochMs = geo.etaEpochMs
                     ?: prev.etaEpochMs.takeIf { sameFlight && leg == null },
+                // Real AeroAPI times persist across ticks of the same flight;
+                // phase 2 fills them in (or refreshes them) when enabled
+                schedArrEpochMs = prev.schedArrEpochMs.takeIf { sameFlight },
+                estArrEpochMs = prev.estArrEpochMs.takeIf { sameFlight },
+                arrDelayMin = prev.arrDelayMin.takeIf { sameFlight },
+                destTimeZone = prev.destTimeZone.takeIf { sameFlight },
+                timesAreReal = prev.timesAreReal && sameFlight,
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 category = ac.category,
                 alertTag = alert?.tags?.firstOrNull(),
@@ -313,6 +327,7 @@ class Ticker(private val context: Context) {
                     }
                     setStage("logos", WidgetState.Stage.DONE, cached = logosWereCached)
                 }
+                launch { enrichWithRealTimes(callsign, prev.timesAreReal && sameFlight) }
             }
 
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s".format(
@@ -346,6 +361,50 @@ class Ticker(private val context: Context) {
                     lastError = e.message ?: e.javaClass.simpleName)
             }
             if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
+        }
+    }
+
+    /**
+     * Real arrival times from AeroAPI — the opt-in upgrade over the geometry
+     * ETA. Strictly bounded: skipped entirely unless the feature is on and
+     * inside its free budget; the billable `/flights` call runs at most once per
+     * distinct flight (cached by callsign, and short-circuited when this tick
+     * already carries real times for the same flight). The free `/account/usage`
+     * endpoint is polled at most every [USAGE_REFRESH_MS] to keep the spend
+     * authoritative and trip the switch off the instant the budget is gone.
+     */
+    private suspend fun enrichWithRealTimes(callsign: String?, alreadyReal: Boolean) {
+        if (callsign == null || alreadyReal) return
+        var aero = AeroStore.read(context)
+        if (!aero.canQuery()) return
+        try {
+            if (System.currentTimeMillis() - aero.lastCheckedMs > USAGE_REFRESH_MS) {
+                runCatching { aeroApi.usageCostUsd() }
+                    .onSuccess { AeroStore.recordUsage(context, it, "Auto-checked") }
+                aero = AeroStore.read(context)
+                if (!aero.canQuery()) return
+            }
+            val times: AeroTimes? = if (cachedAero?.first == callsign) {
+                cachedAero?.second
+            } else {
+                // Count the billable query BEFORE the call so a crash mid-flight
+                // can never let us slip past the cap; a hit returns false → stop
+                if (!AeroStore.recordRequest(context)) return
+                aeroApi.times(callsign).also { cachedAero = callsign to it }
+            }
+            if (times != null) {
+                updateAndRender { st ->
+                    st.copy(
+                        schedArrEpochMs = times.scheduledArrivalMs ?: st.schedArrEpochMs,
+                        estArrEpochMs = times.estimatedArrivalMs ?: st.estArrEpochMs,
+                        arrDelayMin = times.arrivalDelayMin ?: st.arrDelayMin,
+                        destTimeZone = times.destTimeZone ?: st.destTimeZone,
+                        timesAreReal = true,
+                    )
+                }
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "aero times failed for $callsign: $e")
         }
     }
 
@@ -430,5 +489,7 @@ class Ticker(private val context: Context) {
 
     companion object {
         private const val TAG = "Airblock"
+        /** Re-poll the free /account/usage endpoint at most this often. */
+        private const val USAGE_REFRESH_MS = 30L * 60 * 1000
     }
 }
