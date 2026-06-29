@@ -56,17 +56,33 @@ class PlaneAlertRepo(private val context: Context) {
     private fun load(): Map<String, Alert> {
         if (!file.exists()) return emptyMap()
         return runCatching {
-            buildMap {
-                file.bufferedReader().useLines { lines ->
-                    lines.drop(1).forEach { line ->
+            file.bufferedReader().use { reader ->
+                val headerLine = reader.readLine() ?: return@use emptyMap<String, Alert>()
+                // Resolve columns BY NAME, not fixed position: the plane-alert-db
+                // layout changes over time (it has gained columns like "$ICAO
+                // Type"), and a hardcoded index then lands on the wrong tag after
+                // a weekly refresh — which is how Tag 1 became Tag 3.
+                val header = splitCsv(headerLine).map { it.trim().lowercase() }
+                fun colOf(vararg needles: String) =
+                    header.indexOfFirst { h -> needles.any { h.contains(it) } }
+                val iHex = header.indexOf("\$icao").let { if (it >= 0) it else 0 }
+                val iOperator = colOf("operator")
+                val iTag1 = colOf("tag 1", "tag1")
+                val iTag2 = colOf("tag 2", "tag2")
+                val iTag3 = colOf("tag 3", "tag3")
+                val iCategory = header.indexOf("category")
+                buildMap {
+                    reader.forEachLine { line ->
                         val c = splitCsv(line)
-                        val hex = c.getOrNull(0)?.trim()?.uppercase().orEmpty()
+                        val hex = c.getOrNull(iHex)?.trim()?.uppercase().orEmpty()
                         if (hex.isNotEmpty()) {
+                            val tags = listOf(iTag1, iTag2, iTag3)
+                                .filter { it >= 0 }
+                                .mapNotNull { c.getOrNull(it)?.trim()?.ifEmpty { null } }
                             put(hex, Alert(
-                                operator = c.getOrNull(2)?.trim()?.ifEmpty { null },
-                                tags = listOfNotNull(c.getOrNull(6), c.getOrNull(7),
-                                    c.getOrNull(8)).map { it.trim() }.filter { it.isNotEmpty() },
-                                category = c.getOrNull(9)?.trim()?.ifEmpty { null },
+                                operator = c.getOrNull(iOperator)?.trim()?.ifEmpty { null },
+                                tags = tags,
+                                category = c.getOrNull(iCategory)?.trim()?.ifEmpty { null },
                             ))
                         }
                     }
