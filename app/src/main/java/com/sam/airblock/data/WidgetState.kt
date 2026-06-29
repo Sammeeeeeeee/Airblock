@@ -29,18 +29,21 @@ data class WidgetState(
     val routeProgress: Float? = null,
     /** Estimated arrival at destination (epoch ms), from distance/speed. */
     val etaEpochMs: Long? = null,
-    // ---- Real scheduled/actual times from FlightAware AeroAPI (opt-in). When
-    // [timesAreReal] is true the widget shows these instead of the geometry ETA;
-    // when the feature is off or out of free quota they stay null and the ETA
-    // guess above is used.
-    /** Scheduled gate arrival (epoch ms). */
+    // ---- Real times from FlightAware AeroAPI (opt-in). When [timesAreReal] is
+    // true the route pill shows elapsed/total + delay instead of the geometry
+    // ETA; off or out of quota, these stay null and the ETA guess is used.
+    /** Scheduled gate departure / arrival (epoch ms). */
+    val schedDepEpochMs: Long? = null,
     val schedArrEpochMs: Long? = null,
-    /** Estimated — or actual, once landed — gate arrival (epoch ms). */
-    val estArrEpochMs: Long? = null,
+    /** Actual (or estimated) gate departure (epoch ms) — drives elapsed time. */
+    val actualDepEpochMs: Long? = null,
     /** Arrival delay vs schedule, in minutes (negative = early). */
     val arrDelayMin: Int? = null,
-    /** Destination IANA time zone, for showing arrival in local time. */
-    val destTimeZone: String? = null,
+    /** Flight number (e.g. "BA117"), shown beside the airline. */
+    val flightNumber: String? = null,
+    /** Scheduled dep/arr pre-formatted in each airport's local time ("11:14"). */
+    val schedDepLocal: String? = null,
+    val schedArrLocal: String? = null,
     /** True when the times above came from AeroAPI (not the ETA estimate). */
     val timesAreReal: Boolean = false,
     /** Non-standard aircraft type ("Military", "Helicopter", …) or null. */
@@ -118,7 +121,8 @@ data class WidgetState(
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
         manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },
-        timesAreReal, arrDelayMin, estArrEpochMs?.let { it / 60_000 },
+        timesAreReal, arrDelayMin, flightNumber, schedDepLocal, schedArrLocal,
+        actualDepEpochMs?.let { it / 60_000 },
         specialType, category, alertTag, alertCategory, registration, modeLabel,
         refreshing, pausedReason, errorCount > 0,
     ).joinToString("|")

@@ -19,6 +19,8 @@ data class AeroFlightsResponse(val flights: List<AeroFlight> = emptyList())
 @Serializable
 data class AeroFlight(
     val ident: String? = null,
+    @SerialName("ident_iata") val identIata: String? = null,
+    @SerialName("flight_number") val flightNumber: String? = null,
     val cancelled: Boolean = false,
     @SerialName("scheduled_out") val scheduledOut: String? = null,
     @SerialName("estimated_out") val estimatedOut: String? = null,
@@ -52,15 +54,18 @@ data class AeroUsageResponse(
 )
 
 /**
- * Resolved arrival timing for a flight, in epoch-ms and minutes — everything the
- * widget needs to show a *real* arrival time and delay instead of the
- * distance/speed ETA guess.
+ * Resolved real timing for a flight — everything the widget needs to show
+ * elapsed/total time, the delay, the flight number and the scheduled times,
+ * instead of the distance/speed ETA guess.
  */
 data class AeroTimes(
-    val scheduledArrivalMs: Long?,
-    val estimatedArrivalMs: Long?,
+    val schedDepMs: Long?,
+    val actualDepMs: Long?,
+    val schedArrMs: Long?,
     val arrivalDelayMin: Int?,
+    val originTimeZone: String?,
     val destTimeZone: String?,
+    val flightNumber: String?,
 )
 
 /**
@@ -92,13 +97,18 @@ class AeroApi(
             val body = resp.body?.string() ?: return null
             val flight = pick(Http.json.decodeFromString<AeroFlightsResponse>(body).flights)
                 ?: return null
-            val estArr = parseIso(flight.actualIn ?: flight.estimatedIn)
             return AeroTimes(
-                scheduledArrivalMs = parseIso(flight.scheduledIn),
-                estimatedArrivalMs = estArr,
+                schedDepMs = parseIso(flight.scheduledOut),
+                actualDepMs = parseIso(flight.actualOut ?: flight.estimatedOut),
+                schedArrMs = parseIso(flight.scheduledIn),
                 arrivalDelayMin = flight.arrivalDelay?.let { it / 60 },
+                originTimeZone = flight.origin?.timezone,
                 destTimeZone = flight.destination?.timezone,
-            ).takeIf { it.estimatedArrivalMs != null || it.arrivalDelayMin != null }
+                flightNumber = flight.identIata ?: flight.flightNumber,
+            ).takeIf {
+                it.schedDepMs != null || it.arrivalDelayMin != null ||
+                    it.flightNumber != null
+            }
         }
     }
 
