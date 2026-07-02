@@ -5,21 +5,25 @@
 package com.sam.airblock.ui
 
 import android.Manifest
+import android.app.NotificationManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,6 +104,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -118,15 +123,23 @@ import com.sam.airblock.R
 import com.sam.airblock.data.AeroApi
 import com.sam.airblock.data.AeroPrefs
 import com.sam.airblock.data.AeroStore
+import com.sam.airblock.data.CategoryChoice
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
+import com.sam.airblock.data.NotifyPrefs
+import com.sam.airblock.data.NotifyStore
+import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.SecureKeyStore
 import com.sam.airblock.data.Settings
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.engine.AlertNotifier
 import com.sam.airblock.engine.Gates
 import com.sam.airblock.engine.UpdateService
+import com.sam.airblock.util.AlertGroup
+import com.sam.airblock.util.AlertGroups
+import com.sam.airblock.util.WatchEntry
 import com.sam.airblock.widget.AirblockWidgetReceiver
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -653,6 +666,11 @@ private fun SettingsScreen(
             FlightTimesCard()
             Spacer(Modifier.height(24.dp))
 
+            // ---- Aircraft alert notifications -----------------------------
+            SectionLabel("Notifications")
+            NotificationsSection()
+            Spacer(Modifier.height(24.dp))
+
             if (perms.allGranted) setupSection()
 
             // ---- Attribution ----------------------------------------------
@@ -927,6 +945,465 @@ private fun FlightTimesCard() {
 
     if (showKeyDialog) {
         AeroKeyDialog(onDismiss = { showKeyDialog = false }, onSave = ::saveKey)
+    }
+}
+
+/**
+ * Aircraft-alert notifications: master switch, per-group toggles, advanced
+ * per-database-category overrides and the muted-aircraft list. Evaluation
+ * piggybacks on the existing refresh ticks — zero extra network requests.
+ */
+@Composable
+private fun NotificationsSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val cs = MaterialTheme.colorScheme
+    val prefs by NotifyStore.flow(context).collectAsState(initial = NotifyPrefs())
+
+    // Mirror of the system-level switch — the runtime permission can be
+    // revoked from system settings at any time
+    var notifAllowed by remember { mutableStateOf(true) }
+    fun refreshAllowed() {
+        notifAllowed = context.getSystemService(NotificationManager::class.java)
+            .areNotificationsEnabled()
+    }
+    LaunchedEffect(prefs.enabled) { refreshAllowed() }
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { refreshAllowed() }
+
+    fun setEnabled(on: Boolean) {
+        scope.launch { NotifyStore.setEnabled(context, on) }
+        if (on) {
+            // Channels show up in system settings the moment the feature is on
+            AlertNotifier.ensureChannels(context)
+            if (!notifAllowed) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // ---- Master switch ----------------------------------------------------
+    Surface(
+        shape = GroupTop,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Aircraft alerts",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = cs.onSurface,
+                    )
+                    Text(
+                        "Notifies you when the nearest aircraft is something special. " +
+                            "Checks only what the widget already fetched — no extra data " +
+                            "use — so alerts fire while your home screen is visible, plus " +
+                            "a 15-minute background check on Wi-Fi.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = prefs.enabled, onCheckedChange = ::setEnabled)
+            }
+            if (prefs.enabled && !notifAllowed) {
+                Surface(
+                    onClick = {
+                        context.startActivity(
+                            Intent(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(AndroidSettings.EXTRA_APP_PACKAGE, context.packageName)
+                        )
+                    },
+                    shape = RoundedCornerShape(18.dp),
+                    color = cs.errorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painterResource(R.drawable.ic_warning), null,
+                            tint = cs.onErrorContainer,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Notifications are blocked in system settings — tap to fix.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onErrorContainer,
+                        )
+                    }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(GroupGap))
+
+    // ---- Group toggles ------------------------------------------------------
+    Surface(
+        shape = GroupMiddle,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+            AlertGroup.entries.forEach { g ->
+                Row(
+                    Modifier.padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            g.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (prefs.enabled) cs.onSurface else cs.onSurfaceVariant,
+                        )
+                        Text(
+                            g.desc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = g.id in prefs.groups,
+                        enabled = prefs.enabled,
+                        onCheckedChange = { on ->
+                            scope.launch { NotifyStore.setGroup(context, g.id, on) }
+                        },
+                    )
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(GroupGap))
+
+    // ---- Watched aircraft ----------------------------------------------------
+    var showWatchDialog by remember { mutableStateOf(false) }
+    Surface(
+        shape = GroupMiddle,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Watched aircraft",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = cs.onSurface,
+                    )
+                    Text(
+                        "Alert whenever one of these specific aircraft is the nearest one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                FilledTonalIconButton(
+                    onClick = { showWatchDialog = true },
+                    enabled = prefs.enabled,
+                    shapes = IconButtonDefaults.shapes(),
+                ) {
+                    Icon(painterResource(R.drawable.ic_add), "add watched aircraft")
+                }
+            }
+            prefs.watch.forEach { entry ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            entry.label(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = cs.onSurface,
+                        )
+                        Text(
+                            listOfNotNull(
+                                entry.callsign?.takeIf { it.isNotBlank() }?.let { "callsign" },
+                                entry.registration?.takeIf { it.isNotBlank() }?.let { "registration" },
+                                entry.hex?.takeIf { it.isNotBlank() }?.let { "hex" },
+                            ).joinToString(" + "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = cs.onSurfaceVariant,
+                        )
+                    }
+                    FilledTonalIconButton(
+                        onClick = { scope.launch { NotifyStore.removeWatch(context, entry) } },
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        Icon(Icons.Filled.Close, "remove ${entry.label()}")
+                    }
+                }
+            }
+        }
+    }
+    if (showWatchDialog) {
+        WatchDialog(
+            onDismiss = { showWatchDialog = false },
+            onSave = { entry ->
+                showWatchDialog = false
+                scope.launch { NotifyStore.addWatch(context, entry) }
+            },
+        )
+    }
+    Spacer(Modifier.height(GroupGap))
+
+    // ---- Advanced per-category overrides ------------------------------------
+    var advancedOpen by remember { mutableStateOf(false) }
+    var categories by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(advancedOpen) {
+        if (advancedOpen) {
+            // May parse the whole 40k-row CSV on first call — keep off Main
+            categories = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                PlaneAlertRepo(context).categories()
+            }
+        }
+    }
+    val motion = MaterialTheme.motionScheme
+    Surface(
+        shape = GroupMiddle,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.animateContentSize(motion.defaultSpatialSpec())) {
+            Row(
+                Modifier
+                    .clickable { advancedOpen = !advancedOpen }
+                    .padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Advanced: database categories",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = cs.onSurface,
+                    )
+                    Text(
+                        "Override single plane-alert-db categories. Auto follows the " +
+                            "group toggles above; On always alerts; Off never does.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                    )
+                }
+                val chevron by animateFloatAsState(
+                    if (advancedOpen) 90f else 0f,
+                    motion.defaultSpatialSpec(), label = "chevron",
+                )
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward, null,
+                    tint = cs.onSurfaceVariant,
+                    modifier = Modifier.rotate(chevron),
+                )
+            }
+            if (advancedOpen) {
+                Column(
+                    Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
+                    Arrangement.spacedBy(10.dp),
+                ) {
+                    val cats = categories
+                    when {
+                        cats == null -> Text(
+                            "Loading…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant,
+                        )
+                        cats.isEmpty() -> Text(
+                            "The category list appears once the aircraft database has " +
+                                "downloaded (weekly, on Wi-Fi).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant,
+                        )
+                        // The raw names are plane-alert-db in-jokes ("Da
+                        // Comrade", "Radiohead") — show only what they mean
+                        else -> cats.sortedBy { AlertGroups.displayName(it).lowercase() }
+                            .forEach { cat ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        AlertGroups.displayName(cat),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = cs.onSurface,
+                                    )
+                                    Text(
+                                        AlertGroups.groupForCategory(cat).label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = cs.onSurfaceVariant,
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                TriStateChips(
+                                    choice = NotifyStore.categoryChoice(prefs, cat),
+                                    enabled = prefs.enabled,
+                                    onSelect = { c ->
+                                        scope.launch {
+                                            NotifyStore.setCategoryChoice(context, cat, c)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(GroupGap))
+
+    // ---- Muted aircraft -----------------------------------------------------
+    Surface(
+        shape = GroupBottom,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Muted aircraft",
+                style = MaterialTheme.typography.titleSmall,
+                color = cs.onSurface,
+            )
+            if (prefs.muted.isEmpty()) {
+                Text(
+                    "Nothing muted. Use “Mute this aircraft” on any alert to stop a " +
+                        "specific airframe notifying.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant,
+                )
+            } else {
+                prefs.muted.forEach { (hex, label) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = cs.onSurface,
+                            )
+                            Text(
+                                hex,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = cs.onSurfaceVariant,
+                            )
+                        }
+                        FilledTonalIconButton(
+                            onClick = { scope.launch { NotifyStore.unmute(context, hex) } },
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(Icons.Filled.Close, "unmute $label")
+                        }
+                    }
+                }
+            }
+            // Debug builds only: exercise the whole pipeline (channels, icon,
+            // photo, tap, mute action) without waiting for a real military jet
+            if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                TextButton(onClick = { scope.launch { AlertNotifier(context).postTest() } }) {
+                    Text("Send test alert")
+                }
+            }
+        }
+    }
+}
+
+/** Compact Auto / On / Off segment for one database category. */
+@Composable
+private fun TriStateChips(
+    choice: CategoryChoice,
+    enabled: Boolean,
+    onSelect: (CategoryChoice) -> Unit,
+) {
+    ButtonGroup(
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+    ) {
+        val options = listOf(
+            CategoryChoice.DEFAULT to "Auto",
+            CategoryChoice.ALWAYS to "On",
+            CategoryChoice.NEVER to "Off",
+        )
+        options.forEachIndexed { i, (value, label) ->
+            ToggleButton(
+                checked = choice == value,
+                onCheckedChange = { onSelect(value) },
+                enabled = enabled,
+                shapes = when (i) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                },
+                colors = ToggleButtonDefaults.toggleButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                ),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) {
+                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** Add-a-watched-aircraft dialog — any single field is enough. */
+@Composable
+private fun WatchDialog(onDismiss: () -> Unit, onSave: (WatchEntry) -> Unit) {
+    var callsign by remember { mutableStateOf("") }
+    var registration by remember { mutableStateOf("") }
+    var hex by remember { mutableStateOf("") }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(Modifier.padding(24.dp), Arrangement.spacedBy(16.dp)) {
+                Text(
+                    "Watch an aircraft",
+                    style = MaterialTheme.typography.titleLargeEmphasized,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Fill in whichever you know — one is enough. If you fill in " +
+                        "more than one, all of them must match.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = callsign,
+                    onValueChange = { callsign = it },
+                    label = { Text("Callsign / flight (e.g. BAW117)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = registration,
+                    onValueChange = { registration = it },
+                    label = { Text("Registration (e.g. G-XLEA)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = hex,
+                    onValueChange = { hex = it },
+                    label = { Text("ICAO hex (e.g. 406A9C)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            onSave(WatchEntry(
+                                callsign = callsign.trim().ifEmpty { null },
+                                registration = registration.trim().ifEmpty { null },
+                                hex = hex.trim().ifEmpty { null },
+                            ))
+                        },
+                        enabled = callsign.isNotBlank() || registration.isNotBlank() ||
+                            hex.isNotBlank(),
+                    ) {
+                        Text("Add")
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -32,6 +32,30 @@ class PlaneAlertRepo(private val context: Context) {
         return m[h]
     }
 
+    /**
+     * Distinct `Category` values in the CSV, sorted; empty until the DB has
+     * downloaded. First call may parse the whole CSV — call from a background
+     * thread. Drives the advanced notification-category picker.
+     */
+    fun categories(): List<String> {
+        categoriesCache?.let { return it }
+        val m = cache ?: synchronized(LOCK) {
+            cache ?: load().also { cache = it }
+        }
+        // Malformed rows can land URLs or free text in the category column —
+        // keep only plausible category names
+        val cats = m.values
+            .mapNotNullTo(sortedSetOf(String.CASE_INSENSITIVE_ORDER)) { a ->
+                a.category?.takeIf { c ->
+                    c.length in 2..40 && !c.contains("http", ignoreCase = true) &&
+                        !c.contains('/') && !c.contains('.')
+                }
+            }
+            .toList()
+        if (cats.isNotEmpty()) categoriesCache = cats
+        return cats
+    }
+
     fun isStale(): Boolean =
         !file.exists() || System.currentTimeMillis() - file.lastModified() > MAX_AGE_MS
 
@@ -50,7 +74,7 @@ class PlaneAlertRepo(private val context: Context) {
             tmp.writeBytes(body)
             if (!tmp.renameTo(file)) throw IOException("rename failed")
         }
-        synchronized(LOCK) { cache = null } // re-parse lazily on next lookup
+        synchronized(LOCK) { cache = null; categoriesCache = null } // re-parse lazily
     }
 
     private fun load(): Map<String, Alert> {
@@ -78,11 +102,19 @@ class PlaneAlertRepo(private val context: Context) {
                         if (hex.isNotEmpty()) {
                             val tags = listOf(iTag1, iTag2, iTag3)
                                 .filter { it >= 0 }
-                                .mapNotNull { c.getOrNull(it)?.trim()?.ifEmpty { null } }
+                                .mapNotNull {
+                                    // Same $/# tweet-bot prefixes as Category
+                                    c.getOrNull(it)?.trim()
+                                        ?.trimStart('$', '#', ' ')?.ifEmpty { null }
+                                }
                             put(hex, Alert(
                                 operator = c.getOrNull(iOperator)?.trim()?.ifEmpty { null },
                                 tags = tags,
-                                category = c.getOrNull(iCategory)?.trim()?.ifEmpty { null },
+                                // Categories carry $/# control prefixes for the
+                                // upstream tweet bot — strip them for display
+                                // and group matching
+                                category = c.getOrNull(iCategory)?.trim()
+                                    ?.trimStart('$', '#', ' ')?.ifEmpty { null },
                             ))
                         }
                     }
@@ -101,6 +133,10 @@ class PlaneAlertRepo(private val context: Context) {
         // worker and any future caller share it
         @Volatile
         private var cache: Map<String, Alert>? = null
+
+        /** Distinct sorted Category values, memoized alongside [cache]. */
+        @Volatile
+        private var categoriesCache: List<String>? = null
 
         /** Minimal quote-aware CSV splitter (fields may contain commas). */
         fun splitCsv(line: String): List<String> {

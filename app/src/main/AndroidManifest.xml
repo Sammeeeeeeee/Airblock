@@ -65,6 +65,12 @@
                 android:value="Periodic refresh of a home-screen widget showing live nearby-aircraft data; runs only while the widget is visible." />
         </service>
 
+        <!-- "Mute this aircraft" action on alert notifications; reached only
+             via an explicit PendingIntent -->
+        <receiver
+            android:name=".engine.MuteReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".engine.BootReceiver"
             android:exported="false">

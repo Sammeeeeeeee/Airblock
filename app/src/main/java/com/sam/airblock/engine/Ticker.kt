@@ -18,6 +18,7 @@ import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.AirlineCodes
+import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
@@ -44,6 +45,7 @@ class Ticker(private val context: Context) {
     private val airlineLogos = AirlineLogoRepo(context)
     private val manufacturerLogos = ManufacturerLogoRepo(context)
     private val planeAlerts = PlaneAlertRepo(context)
+    private val alertNotifier = AlertNotifier(context)
     private val gates = Gates(context)
     private val api = AdsbApi()
     private val aeroApi = AeroApi(context)
@@ -232,8 +234,10 @@ class Ticker(private val context: Context) {
                 timesAreReal = prev.timesAreReal && sameFlight,
                 specialType = SpecialType.classify(ac.category, ac.dbFlags),
                 category = ac.category,
-                alertTag = alert?.tags?.firstOrNull(),
-                alertCategory = alert?.category,
+                // Friendly names, not plane-alert-db's in-joke labels — the
+                // widget badge shows these directly
+                alertTag = alert?.tags?.firstOrNull()?.let(AlertGroups::displayName),
+                alertCategory = alert?.category?.let(AlertGroups::displayName),
                 squawkAlert = Squawk.emergencyLabel(ac.squawk),
                 originIata = leg?.first?.iata ?: prev.originIata.takeIf { sameFlight },
                 originCity = leg?.first?.location ?: prev.originCity.takeIf { sameFlight },
@@ -266,6 +270,21 @@ class Ticker(private val context: Context) {
             if (sameType && prev.modelLogoPath != null) {
                 updateAndRender { it.copy(modelLogoPath = prev.modelLogoPath) }
             }
+
+            // ---- Notifications: evaluate the aircraft we already have ------
+            // Zero network — runs on both the service and worker tick paths.
+            // A notifier bug must never take the tick down.
+            runCatching {
+                alertNotifier.evaluate(
+                    ac = ac, alert = alert, typeName = resolvedTypeName,
+                    distanceKm = if (ac.lat != null && ac.lon != null)
+                        Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
+                    else ac.dst?.let { Units.nmToKm(it) },
+                    fixLat = fix.lat, fixLon = fix.lon,
+                    prevClosestHex = prev.hex,
+                    photos = photos,
+                )
+            }.onFailure { Log.w(TAG, "alert evaluation failed: $it") }
 
             // ---- Phase 2: route, photo and logos IN PARALLEL ---------------
             // Each result lands on the widget the moment it arrives — no

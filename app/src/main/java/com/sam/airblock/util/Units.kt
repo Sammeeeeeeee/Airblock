@@ -31,6 +31,23 @@ object Units {
         return 2 * r * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
     }
 
+    /** Initial great-circle bearing from point 1 to point 2, degrees 0..360. */
+    fun bearingDeg(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val p1 = Math.toRadians(lat1)
+        val p2 = Math.toRadians(lat2)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val y = kotlin.math.sin(dLon) * kotlin.math.cos(p2)
+        val x = kotlin.math.cos(p1) * kotlin.math.sin(p2) -
+            kotlin.math.sin(p1) * kotlin.math.cos(p2) * kotlin.math.cos(dLon)
+        return (Math.toDegrees(kotlin.math.atan2(y, x)) + 360.0) % 360.0
+    }
+
+    /** 8-wind compass point for a bearing: 45° -> "NE". */
+    fun compass8(deg: Double): String {
+        val dirs = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        return dirs[(((deg % 360 + 360) % 360 + 22.5) / 45.0).toInt() % 8]
+    }
+
     /** "US" -> 🇺🇸 via regional indicator symbols. Empty for invalid input. */
     fun flagEmoji(countryIso2: String?): String {
         val cc = countryIso2?.trim()?.uppercase() ?: return ""
