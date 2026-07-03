@@ -540,8 +540,8 @@ private fun SettingsScreen(
                 PermissionRow(
                     icon = Icons.Filled.LocationOn,
                     title = "Precise location",
-                    rationale = "Finds the aircraft nearest to you. Airblock only reads the " +
-                        "phone's already-cached fix — no GPS battery drain.",
+                    rationale = "Finds the aircraft nearest to you, using Android's cached " +
+                        "location.",
                     granted = perms.fine,
                     shape = GroupTop,
                     onClick = onGrantLocation,
@@ -550,8 +550,8 @@ private fun SettingsScreen(
                 PermissionRow(
                     icon = Icons.Filled.Settings,
                     title = "Location all the time",
-                    rationale = "Lets the widget refresh while the app is closed. In App info " +
-                        "→ Permissions → Location, choose “Allow all the time”.",
+                    rationale = "Allows the widget to refresh while the app is closed. In App " +
+                        "info → Permissions → Location, choose “Allow all the time”.",
                     granted = perms.background,
                     shape = GroupMiddle,
                     onClick = onGrantBackground,
@@ -560,8 +560,8 @@ private fun SettingsScreen(
                 PermissionRow(
                     icon = Icons.Filled.Info,
                     title = "Usage access",
-                    rationale = "Pauses refreshes whenever your home screen isn't visible — " +
-                        "this is what keeps Airblock's battery use near zero.",
+                    rationale = "Pauses refreshes when the widget is not visible, to reduce " +
+                        "battery usage.",
                     granted = perms.usage,
                     shape = GroupMiddle,
                     onClick = onGrantUsage,
@@ -840,9 +840,8 @@ private fun FlightTimesCard() {
                         color = cs.onSurface,
                     )
                     Text(
-                        "Show FlightAware's scheduled and actual arrival instead of the " +
-                            "estimated ETA. Uses your feeder's free AeroAPI quota; when it's " +
-                            "off or used up, the widget falls back to the ETA estimate.",
+                        "Use FlightAware's AeroAPI up until the usage limit for flight " +
+                            "schedules.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -996,10 +995,7 @@ private fun NotificationsSection() {
                         color = cs.onSurface,
                     )
                     Text(
-                        "Notifies you when the nearest aircraft is something special. " +
-                            "Checks only what the widget already fetched — no extra data " +
-                            "use — so alerts fire while your home screen is visible, plus " +
-                            "a 15-minute background check on Wi-Fi.",
+                        "Notifications for out of the ordinary aircraft.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -1044,7 +1040,13 @@ private fun NotificationsSection() {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-            AlertGroup.entries.forEach { g ->
+            // Display order puts the niche "Specific aircraft" toggle at the
+            // bottom; notification priority still follows the enum declaration
+            // order (see AlertGroup), where WATCHLIST intentionally outranks
+            // the category groups.
+            val displayGroups = AlertGroup.entries.filterNot { it == AlertGroup.WATCHLIST } +
+                AlertGroup.WATCHLIST
+            displayGroups.forEach { g ->
                 Row(
                     Modifier.padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1176,8 +1178,7 @@ private fun NotificationsSection() {
                         color = cs.onSurface,
                     )
                     Text(
-                        "Override single plane-alert-db categories. Auto follows the " +
-                            "group toggles above; On always alerts; Off never does.",
+                        "Customise specific categories.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -1674,7 +1675,7 @@ private fun RestartRow(onRestart: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "If the widget ever sticks: rebuilds its render sessions and the engine.",
+                    "Rebuild the widget render sessions and engine.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2111,15 +2112,15 @@ private fun BatteryRow(granted: Boolean, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Battery — unrestricted",
+                        "Unrestricted battery",
                         style = MaterialTheme.typography.titleMediumEmphasized,
                         color = onColor,
                     )
                     StageTag("optional", onColor)
                 }
                 Text(
-                    "Some phones kill background apps anyway; unrestricted keeps the " +
-                        "widget reliable. Airblock's own gating keeps real usage near zero.",
+                    "Background apps often get paused and prevent the widget updating — " +
+                        "this allows the app to continue operating.",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (granted) onColor
                     else MaterialTheme.colorScheme.onSurfaceVariant,

@@ -22,9 +22,9 @@ enum class AlertGroup(
     EMERGENCY("emergency", "alert2_emergency", "Emergency squawk", "Emergency squawk nearby",
         "Squawk 7500 · 7600 · 7700", true),
     WATCHLIST("watchlist", "alert2_watchlist", "Watched aircraft", "Watched aircraft overhead",
-        "Specific aircraft you added below", true),
+        "Specific aircraft", true),
     GOV("gov", "alert2_gov", "Government & VIP", "Government aircraft overhead",
-        "Governments, dictator alert, royals, famous people", true),
+        "Governments, royals, famous people", true),
     MILITARY("military", "alert2_military", "Military", "Military aircraft overhead",
         "Air forces and armed forces worldwide", true),
     SERVICES("services", "alert2_services", "Police, medical & coastguard",
@@ -36,7 +36,7 @@ enum class AlertGroup(
         "Interesting aircraft overhead",
         "Vintage, distinctive and notable airframes", true),
     OTHER("other", "alert2_other", "Other special", "Special aircraft overhead",
-        "Anything else tagged in plane-alert-db", false),
+        "Any other notable aircraft", false),
 }
 
 /**
