@@ -89,14 +89,31 @@ class AdsbApi(private val client: OkHttpClient = Http.client) {
     }
 
     /**
-     * Route for a callsign — a 302 to a static JSON file on adsb.lol's CDN,
-     * so this is one cheap GET per flight. Null when the route is unknown (404).
+     * Route for a callsign. Primary path is `api.adsb.lol/api/0/route/{cs}`,
+     * which merely 302-redirects to a static JSON file on adsb.lol's CDN.
+     * That redirector is a separate (occasionally 503-ing) service from the
+     * CDN itself, so if the primary request fails we retry against the CDN
+     * file directly — same JSON, one hop, no dependency on the redirector.
+     *
+     * Null when the route is unknown (404). A 404 is a definitive answer, not
+     * a failure, so it does not trigger the fallback.
      */
     @Throws(IOException::class)
     fun route(callsign: String): RouteResult? {
-        val req = Request.Builder()
-            .url("https://api.adsb.lol/api/0/route/${callsign.trim().uppercase()}")
-            .build()
+        val cs = callsign.trim().uppercase()
+        return try {
+            fetchRoute("https://api.adsb.lol/api/0/route/$cs")
+        } catch (primary: IOException) {
+            // Redirector unreachable/erroring — go straight to the CDN file it
+            // would have pointed us at ({first two chars}/{callsign}.json).
+            fetchRoute("https://vrs-standing-data.adsb.lol/routes/${cs.take(2)}/$cs.json")
+        }
+    }
+
+    /** Fetch and parse a route JSON document; null on 404 or <2 airports. */
+    @Throws(IOException::class)
+    private fun fetchRoute(url: String): RouteResult? {
+        val req = Request.Builder().url(url).build()
         routeClient.newCall(req).execute().use { resp ->
             if (resp.code == 404) return null
             if (!resp.isSuccessful) throw IOException("route HTTP ${resp.code}")
