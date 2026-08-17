@@ -1274,6 +1274,23 @@ private fun NotificationsSection() {
     Spacer(Modifier.height(GroupGap))
 
     // ---- Muted aircraft -----------------------------------------------------
+    // What the database says each muted airframe is. Resolved locally from the
+    // cached plane-alert-db (no network, no schema change), so it also fills in
+    // for aircraft that were muted before this line existed.
+    var mutedCategories by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(prefs.muted.keys) {
+        val hexes = prefs.muted.keys
+        mutedCategories =
+            if (hexes.isEmpty()) emptyMap()
+            else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // May parse the whole 40k-row CSV on first call — keep off Main
+                val db = PlaneAlertRepo(context)
+                hexes.mapNotNull { hex ->
+                    db.lookup(hex)?.category?.takeIf { it.isNotBlank() }
+                        ?.let { hex to AlertGroups.displayName(it) }
+                }.toMap()
+            }
+    }
     Surface(
         shape = GroupBottom,
         color = cs.surfaceContainerLow,
@@ -1301,12 +1318,23 @@ private fun NotificationsSection() {
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = cs.onSurface,
                             )
-                            Text(
-                                hex,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = cs.onSurfaceVariant,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    hex,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = cs.onSurfaceVariant,
+                                )
+                                // Why this airframe was worth alerting on in the
+                                // first place — the database category
+                                mutedCategories[hex]?.let { category ->
+                                    Text(
+                                        " · $category",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = cs.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                         FilledTonalIconButton(
                             onClick = { scope.launch { NotifyStore.unmute(context, hex) } },
