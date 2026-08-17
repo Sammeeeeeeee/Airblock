@@ -840,8 +840,8 @@ private fun FlightTimesCard() {
                         color = cs.onSurface,
                     )
                     Text(
-                        "Use FlightAware's AeroAPI up until the usage limit for flight " +
-                            "schedules.",
+                        "Real schedules from FlightAware's AeroAPI, paced to spread the " +
+                            "free monthly allowance across the whole month.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -868,17 +868,27 @@ private fun FlightTimesCard() {
                     color = cs.onSurfaceVariant,
                 )
             } else {
-                // Pace-based quota meter: GREEN while on or ahead of the even
-                // monthly burn rate, RED once the current rate is projected to
-                // exhaust the allowance before the month ends (or it's spent).
-                val cal = java.util.Calendar.getInstance(
-                    java.util.TimeZone.getTimeZone("UTC"))
-                val daysInMonth = cal.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-                val elapsedFrac = ((cal.get(java.util.Calendar.DAY_OF_MONTH) - 1) +
-                    cal.get(java.util.Calendar.HOUR_OF_DAY) / 24.0) / daysInMonth
-                val overPace = aero.exhausted() ||
-                    aero.requestCount > AeroStore.HARD_LIMIT * elapsedFrac
-                val meterColor = if (overPace) cs.error else Color(0xFF2E7D32)
+                // Live pacing readout: the drip rate and bucket the engine is
+                // actually using (AeroPace), recomputed on a 30 s tick so the
+                // "ready now" figure refills in front of you.
+                var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        kotlinx.coroutines.delay(30_000)
+                        nowMs = System.currentTimeMillis()
+                    }
+                }
+                val perDay = aero.requestsPerDay(nowMs)
+                val ready = aero.tokensNow(nowMs).toInt()
+                val paced = aero.paced(nowMs)
+                // GREEN while queries can flow, AMBER while the pacer is holding
+                // them back (nothing is wrong — it's spreading the month out),
+                // RED once the allowance is actually gone.
+                val meterColor = when {
+                    aero.exhausted() -> cs.error
+                    paced -> Color(0xFFB26A00)
+                    else -> Color(0xFF2E7D32)
+                }
                 val countFrac = (aero.requestCount.toDouble() / AeroStore.HARD_LIMIT)
                     .toFloat().coerceIn(0f, 1f)
                 Surface(
@@ -924,6 +934,15 @@ private fun FlightTimesCard() {
                             color = meterColor,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (!aero.exhausted()) {
+                            // What the pacer is doing right now, in plain words
+                            Text(
+                                "Paced to ~%,.0f lookups/day · %d ready now"
+                                    .format(perDay, ready),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 if (aero.exhausted()) {
@@ -931,6 +950,13 @@ private fun FlightTimesCard() {
                         "Monthly free usage used up — paused until next month.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.error,
+                    )
+                } else if (paced) {
+                    Text(
+                        "Spreading what's left over the rest of the month — flights use " +
+                            "the estimated time until the next lookup is due.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {

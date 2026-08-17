@@ -55,6 +55,9 @@ class Ticker(private val context: Context) {
     // One AeroAPI times lookup per callsign — the billable call is made at most
     // once per distinct flight (see also the timesAreReal guard below)
     private var cachedAero: Pair<String, AeroTimes?>? = null
+    // Last callsign we logged a pacing skip for, so the activity log gets one
+    // line per flight instead of one per tick
+    private var lastPacedCallsign: String? = null
 
     var consecutiveErrors = 0
         private set
@@ -414,7 +417,9 @@ class Ticker(private val context: Context) {
      * only after the adsb.lol route resolves: if there is no route ([routeKnown]
      * false) we don't bother and spend nothing. Otherwise strictly bounded — the
      * billable `/flights` call runs at most once per distinct flight (cached by
-     * callsign, short-circuited when this tick already carries real times). The
+     * callsign, short-circuited when this tick already carries real times) and
+     * only when [AeroStore.trySpend] releases a token, which drips the month's
+     * remaining allowance out over the month's remaining time. The
      * free `/account/usage` endpoint is polled at most every [USAGE_REFRESH_MS]
      * to keep the spend authoritative and trip the switch off when it's gone.
      * Drives the "schedule" checklist stage throughout.
@@ -451,11 +456,32 @@ class Ticker(private val context: Context) {
             val times: AeroTimes? = if (cachedHit) {
                 cachedAero?.second
             } else {
-                // Count the billable query BEFORE the call so a crash mid-flight
-                // can never let us slip past the cap; a hit returns false → stop
-                if (!AeroStore.recordRequest(context)) {
-                    setStage("schedule", WidgetState.Stage.DONE, label = "Schedule — quota used")
-                    return
+                // Budget gate: counts the billable query up front and drips the
+                // allowance out over the month (see AeroPace). PACED means the
+                // quota is fine but this flight has to wait — the widget keeps
+                // its geometry ETA, and the next tick asks again.
+                when (AeroStore.trySpend(context)) {
+                    AeroStore.Spend.EXHAUSTED -> {
+                        setStage("schedule", WidgetState.Stage.DONE,
+                            label = "Schedule — quota used")
+                        return
+                    }
+                    AeroStore.Spend.PACED -> {
+                        setStage("schedule", WidgetState.Stage.DONE,
+                            label = "Schedule — pacing quota")
+                        // One line per flight, not per tick: the same callsign
+                        // stays overhead across many ticks while paced out.
+                        if (log && lastPacedCallsign != callsign) {
+                            lastPacedCallsign = callsign
+                            val a = AeroStore.read(context)
+                            EventLog.append(context,
+                                "AeroAPI paced — $callsign skipped " +
+                                    "(~%.0f requests/day left this month)"
+                                        .format(a.requestsPerDay()))
+                        }
+                        return
+                    }
+                    AeroStore.Spend.OK -> Unit
                 }
                 aeroApi.times(callsign).also { cachedAero = callsign to it }
             }

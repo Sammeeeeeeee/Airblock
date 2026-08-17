@@ -35,10 +35,19 @@ class PhotoRepo(context: Context) {
         if (img.exists()) return CachedPhoto(img, credit.takeIf { it.exists() }?.readText())
         if (miss.exists() && System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS) return null
 
-        return try {
-            fetch(safeHex, img, credit, miss)
-        } catch (_: IOException) {
-            null // network blip — try again next time this hex shows up
+        // The tick and an alert notification can both want the same airframe at
+        // the same moment — one fetches, the other waits and reads the cache.
+        return synchronized(lockFor(safeHex)) {
+            if (img.exists()) return@synchronized CachedPhoto(
+                img, credit.takeIf { it.exists() }?.readText())
+            if (miss.exists() &&
+                System.currentTimeMillis() - miss.lastModified() < NEG_TTL_MS
+            ) return@synchronized null
+            try {
+                fetch(safeHex, img, credit, miss)
+            } catch (_: IOException) {
+                null // network blip — try again next time this hex shows up
+            }
         }
     }
 
@@ -64,7 +73,11 @@ class PhotoRepo(context: Context) {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
             if (opts.outWidth <= 0) throw IOException("bad image")
-            img.writeBytes(bytes)
+            // Write-then-rename: a reader (widget render, notification) can
+            // never pick up a half-written file
+            val tmp = File(img.parentFile, "${img.name}.part")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(img)) { img.writeBytes(bytes); tmp.delete() }
         }
         photo.photographer?.let { credit.writeText(it) }
         prune()
@@ -78,6 +91,8 @@ class PhotoRepo(context: Context) {
         dir.listFiles { f -> f.extension == "none" }
             ?.filter { now - it.lastModified() > NEG_TTL_MS }
             ?.forEach { it.delete() }
+        // Half-written downloads from a killed process
+        dir.listFiles { f -> f.extension == "part" }?.forEach { it.delete() }
 
         val images = dir.listFiles { f -> f.extension == "jpg" } ?: return
         if (images.size <= MAX_PHOTOS) return
@@ -91,6 +106,17 @@ class PhotoRepo(context: Context) {
     }
 
     companion object {
+        /**
+         * Fetch locks, shared process-wide (each tick path builds its own
+         * [PhotoRepo], but they all write the same cache directory). Striped
+         * rather than per-hex so the table can't grow with every airframe ever
+         * seen; a hash collision just means two aircraft fetch in turn.
+         */
+        private val locks = Array(8) { Any() }
+
+        private fun lockFor(hex: String): Any =
+            locks[(hex.hashCode() ushr 1) % locks.size]
+
         private const val MAX_PHOTOS = 20
         private const val NEG_TTL_MS = 7L * 24 * 60 * 60 * 1000 // retry "no photo" weekly
     }
