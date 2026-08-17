@@ -186,11 +186,11 @@ class AlertNotifier(private val context: Context) {
                 b.setStyle(Notification.BigPictureStyle()
                     .bigPicture(bmp)
                     // Collapsed shows the thumbnail, expanded the full photo —
-                    // keeping both would show the same image twice
-                    .bigLargeIcon(null as Icon?)
-                    // Planespotters photos are the photographer's work: credit
-                    // them under the expanded picture, as the widget does
-                    .setSummaryText(p.photographer?.let { "Photo © $it" } ?: body))
+                    // keeping both would show the same image twice.
+                    // No summary text either: BigPictureStyle falls back to the
+                    // content text, so anything set here just repeats a line
+                    // the notification is already showing.
+                    .bigLargeIcon(null as Icon?))
             }
         }
         nm.notify(hex, NOTIF_ID_ALERT, b.build())
