@@ -22,13 +22,25 @@ import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.Units
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
  * Aircraft-alert notifications. [evaluate] is called from the tick path with
- * the aircraft that was ALREADY fetched — it never touches the network (the
- * Planespotters photo is attached only when it is on disk).
+ * the aircraft that was ALREADY fetched — deciding whether to alert costs no
+ * network at all.
+ *
+ * The photo arrives in two phases so a rare overhead aircraft is never delayed
+ * behind an image download: the alert posts immediately with whatever is on
+ * disk, and if this airframe has no cached photo the Planespotters lookup runs
+ * off the tick path and re-posts the SAME notification (same tag + id) with the
+ * picture attached. `setOnlyAlertOnce` means that update is silent, and the
+ * re-post is skipped if the alert has already been dismissed.
  *
  * Anti-spam: an airframe never re-fires while it remains the closest aircraft,
  * and once it leaves, [NotifyStore.COOLDOWN_MS] must pass before it can alert
@@ -36,6 +48,12 @@ import java.io.File
  * mutes) — a 7700 overhead is safety-relevant.
  */
 class AlertNotifier(private val context: Context) {
+
+    /**
+     * Photo fetches outlive the tick that started them (they must not hold it
+     * up), but never the process — a lost download just means no picture.
+     */
+    private val photoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun evaluate(
         ac: Aircraft,
@@ -73,11 +91,20 @@ class AlertNotifier(private val context: Context) {
             System.currentTimeMillis() - (state.recent[hex] ?: 0L) < NotifyStore.COOLDOWN_MS
         ) return
 
-        // Reuse only what the tick already cached — never fetch
-        val photoFile =
-            if (photos.isCached(ac.hex)) photos.photoFor(ac.hex)?.file else null
-        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, photoFile)
+        // Phase 1: post NOW with the disk-cached photo, if this airframe has one
+        val cached = if (photos.isCached(ac.hex)) photos.photoFor(ac.hex) else null
+        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached)
         NotifyStore.recordNotified(context, hex, group.id)
+        // Phase 2: first sighting of this airframe — fetch the photo off the
+        // tick path and fill it into the notification that is already up.
+        if (cached == null) photoScope.launch {
+            val fetched = withTimeoutOrNull(PHOTO_FETCH_TIMEOUT_MS) {
+                runCatching { photos.photoFor(ac.hex) }.getOrNull()
+            } ?: return@launch
+            // Don't resurrect an alert the user has already swiped away
+            if (nm.activeNotifications.none { it.tag == hex && it.id == NOTIF_ID_ALERT }) return@launch
+            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched)
+        }
         if (SettingsStore.read(context).logEnabled) {
             EventLog.append(context, "ALERT — ${group.label}: ${ac.callsign ?: ac.r ?: hex}")
         }
@@ -87,15 +114,16 @@ class AlertNotifier(private val context: Context) {
     suspend fun postTest() {
         ensureChannels(context)
         // Borrow the widget's current photo so the BigPicture path is exercised
-        val photoFile = WidgetStateStore.read(context).photoPath
-            ?.let { File(it) }?.takeIf { it.exists() }
+        val state = WidgetStateStore.read(context)
+        val photo = state.photoPath?.let { File(it) }?.takeIf { it.exists() }
+            ?.let { PhotoRepo.CachedPhoto(it, state.photoCredit) }
         val ac = Aircraft(
             hex = "TEST01", flight = "AIRBLK1", r = "ZK349", t = "EUFI",
             desc = "EUROFIGHTER Typhoon", altBaro = JsonPrimitive(2400),
             gs = 415.0, category = "A2", dbFlags = 1L, dst = 3.5,
         )
         post(AlertGroup.MILITARY, ac, alert = null, typeName = "Eurofighter Typhoon",
-            distanceKm = 6.5, fixLat = 0.0, fixLon = 0.0, photoFile = photoFile)
+            distanceKm = 6.5, fixLat = 0.0, fixLon = 0.0, photo = photo)
     }
 
     private fun post(
@@ -106,7 +134,7 @@ class AlertNotifier(private val context: Context) {
         distanceKm: Double?,
         fixLat: Double,
         fixLon: Double,
-        photoFile: File?,
+        photo: PhotoRepo.CachedPhoto?,
     ) {
         val nm = context.getSystemService(NotificationManager::class.java)
         ensureChannels(context)
@@ -146,15 +174,23 @@ class AlertNotifier(private val context: Context) {
             .setContentTitle(group.title)
             .setContentText(body)
             .setSubText(reason)
+            // The photo arrives as a second post of the same notification —
+            // update it in place, don't buzz the user twice for one aircraft
+            .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(context, R.drawable.ic_mute),
                 "Mute this aircraft", mute).build())
-        photoFile?.let { f ->
-            BitmapFactory.decodeFile(f.absolutePath)?.let { bmp ->
+        photo?.let { p ->
+            BitmapFactory.decodeFile(p.file.absolutePath)?.let { bmp ->
                 b.setLargeIcon(bmp)
                 b.setStyle(Notification.BigPictureStyle()
                     .bigPicture(bmp)
-                    .bigLargeIcon(null as Icon?))
+                    // Collapsed shows the thumbnail, expanded the full photo —
+                    // keeping both would show the same image twice
+                    .bigLargeIcon(null as Icon?)
+                    // Planespotters photos are the photographer's work: credit
+                    // them under the expanded picture, as the widget does
+                    .setSummaryText(p.photographer?.let { "Photo © $it" } ?: body))
             }
         }
         nm.notify(hex, NOTIF_ID_ALERT, b.build())
@@ -163,6 +199,12 @@ class AlertNotifier(private val context: Context) {
     companion object {
         /** Tagged per airframe hex; the FGS notification owns id 1. */
         const val NOTIF_ID_ALERT = 2
+
+        /**
+         * Give up on the photo rather than leave a request hanging: the alert
+         * itself is already on screen, the picture is a bonus.
+         */
+        private const val PHOTO_FETCH_TIMEOUT_MS = 20_000L
 
         /**
          * First-generation channels were IMPORTANCE_DEFAULT, which posts

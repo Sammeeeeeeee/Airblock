@@ -16,6 +16,13 @@ Built to be **as light as possible** for 24/7 use:
   per 10 min; user-saved home coordinates as fallback.
 - Widget re-renders only when visible data actually changed.
 
+## Alerts
+Optional heads-up notifications when something worth looking up at goes over: emergency squawks,
+military, government, historic aircraft, drones, or your own watchlist of registrations. They ride
+on the refresh ticks already happening, so they cost no extra requests. Each alert carries the
+aircraft's **photo** — posted the instant the aircraft is seen, with the Planespotters shot filled
+into the same notification (credited, no second buzz) as soon as it downloads.
+
 ## Data sources
 - Live aircraft: [adsb.lol](https://adsb.lol) community ADS-B network (free, no key)
 - Photos: [Planespotters.net](https://www.planespotters.net) public API — © the photographers
@@ -23,6 +30,10 @@ Built to be **as light as possible** for 24/7 use:
   scheduled/actual arrival in place of the ETA estimate. Opt-in under **Tuning → Flight times**;
   the key is stored in the Android keystore (never in the repo or APK), and usage is capped to
   stay inside the feeder's free $10/month allowance, auto-disabling when spent.
+  Lookups are **paced**: the allowance still unspent is drip-fed over the time still left in the
+  billing month (with a small burst so a run of new flights all resolve), so one busy afternoon
+  can't eat the whole month and quiet days automatically raise the rate. The settings card shows
+  the live rate — "Paced to ~50 lookups/day · 8 ready now".
 
 ## Build
 Requires Android Studio (or Android SDK 35 + JDK 17). `gradlew assembleDebug`, deploy with

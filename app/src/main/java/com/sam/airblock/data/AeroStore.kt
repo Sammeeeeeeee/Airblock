@@ -1,6 +1,7 @@
 package com.sam.airblock.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -17,7 +18,8 @@ import java.util.TimeZone
 
 /**
  * State for the optional AeroAPI flight-times feature: the on/off switch, the
- * per-month billable-request counter, and the last-known usage cost.
+ * per-month billable-request counter, the last-known usage cost, and the
+ * pacing bucket that spreads that allowance across the month.
  *
  * This is the guardrail that keeps spend inside the free allowance. Two
  * independent limits both force the feature OFF automatically:
@@ -27,6 +29,10 @@ import java.util.TimeZone
  *    feeder allowance buys, so even if usage polling fails we can't overrun; and
  *  - the **authoritative cost** from `/account/usage` ([lastCostUsd]) — once it
  *    reaches [BUDGET_USD] the switch trips off.
+ *
+ * Between those two floors sits [AeroPace]: the allowance is drip-fed at
+ * "everything left ÷ time left in the month" so a single busy day can't spend
+ * four weeks of quota, while quiet days automatically raise the rate.
  *
  * The counter resets at the start of each calendar month, matching how the
  * AeroAPI free allowance renews.
@@ -41,6 +47,9 @@ data class AeroPrefs(
     val lastCheckedMs: Long = 0L,
     /** Human label of the last usage check ("Checked 12:04" / "Check failed"). */
     val lastStatus: String? = null,
+    /** Pacing bucket as last written, and when — see [AeroPace]. */
+    val tokens: Double? = null,
+    val tokensAtMs: Long = 0L,
 ) {
     /** Can a billable flight query be made right now? */
     fun canQuery(): Boolean =
@@ -51,6 +60,21 @@ data class AeroPrefs(
     /** True when the feature has been forced off by hitting a limit. */
     fun exhausted(): Boolean =
         requestCount >= AeroStore.HARD_LIMIT || (lastCostUsd ?: 0.0) >= AeroStore.BUDGET_USD
+
+    /** Requests still affordable this month under BOTH limits. */
+    fun remainingRequests(): Int = AeroPace.remainingRequests(requestCount, lastCostUsd)
+
+    /** Queries available right now — how much of the burst is left. */
+    fun tokensNow(nowMs: Long = System.currentTimeMillis()): Double =
+        AeroPace.tokensAt(tokens, tokensAtMs, nowMs, remainingRequests())
+
+    /** The current drip rate, for display: requests per day. */
+    fun requestsPerDay(nowMs: Long = System.currentTimeMillis()): Double =
+        AeroPace.requestsPerDay(remainingRequests(), nowMs)
+
+    /** True when the next query would be held back purely by pacing. */
+    fun paced(nowMs: Long = System.currentTimeMillis()): Boolean =
+        !exhausted() && tokensNow(nowMs) < 1.0
 }
 
 object AeroStore {
@@ -61,12 +85,26 @@ object AeroStore {
     /** Local safety cap on billable queries/month (≈ the $10 ÷ $0.005 = 2000). */
     const val HARD_LIMIT = 1900
 
+    /** Outcome of asking for one billable query. */
+    enum class Spend {
+        /** Go ahead — a token was consumed and the request counted. */
+        OK,
+
+        /** Allowance intact but the drip rate says "not yet". */
+        PACED,
+
+        /** Monthly allowance gone; the feature has switched itself off. */
+        EXHAUSTED,
+    }
+
     private val ENABLED = booleanPreferencesKey("aero_enabled")
     private val COUNT = intPreferencesKey("aero_req_count")
     private val PERIOD = stringPreferencesKey("aero_period")
     private val COST = doublePreferencesKey("aero_cost_usd")
     private val CHECKED = longPreferencesKey("aero_checked_ms")
     private val STATUS = stringPreferencesKey("aero_status")
+    private val TOKENS = doublePreferencesKey("aero_tokens")
+    private val TOKENS_AT = longPreferencesKey("aero_tokens_at_ms")
 
     /** Current "yyyy-MM" in UTC — the billing period the counter belongs to. */
     private fun currentPeriod(): String =
@@ -74,58 +112,79 @@ object AeroStore {
             .apply { timeZone = TimeZone.getTimeZone("UTC") }
             .format(Calendar.getInstance(TimeZone.getTimeZone("UTC")).time)
 
-    private fun decode(
-        enabled: Boolean, count: Int, period: String,
-        cost: Double?, checked: Long, status: String?,
-    ): AeroPrefs {
+    private fun decode(p: Preferences): AeroPrefs {
         val now = currentPeriod()
-        // A rolled-over month zeroes the counter and clears the stale cost.
-        return if (period != now)
-            AeroPrefs(enabled = enabled, requestCount = 0, period = now,
-                lastCostUsd = null, lastCheckedMs = 0L, lastStatus = null)
+        // A rolled-over month zeroes the counter, clears the stale cost and
+        // hands back a fresh (full) pacing bucket.
+        return if (p[PERIOD].orEmpty() != now)
+            AeroPrefs(enabled = p[ENABLED] ?: false, requestCount = 0, period = now,
+                lastCostUsd = null, lastCheckedMs = 0L, lastStatus = null,
+                tokens = null, tokensAtMs = 0L)
         else
-            AeroPrefs(enabled, count, period, cost, checked, status)
-    }
-
-    suspend fun read(context: Context): AeroPrefs {
-        val p = context.airblockStore.data.first()
-        return decode(
-            p[ENABLED] ?: false, p[COUNT] ?: 0, p[PERIOD] ?: "",
-            p[COST], p[CHECKED] ?: 0L, p[STATUS],
-        )
-    }
-
-    fun flow(context: Context): Flow<AeroPrefs> =
-        context.airblockStore.data.map { p ->
-            decode(
-                p[ENABLED] ?: false, p[COUNT] ?: 0, p[PERIOD] ?: "",
-                p[COST], p[CHECKED] ?: 0L, p[STATUS],
+            AeroPrefs(
+                enabled = p[ENABLED] ?: false,
+                requestCount = p[COUNT] ?: 0,
+                period = p[PERIOD].orEmpty(),
+                lastCostUsd = p[COST],
+                lastCheckedMs = p[CHECKED] ?: 0L,
+                lastStatus = p[STATUS],
+                tokens = p[TOKENS],
+                tokensAtMs = p[TOKENS_AT] ?: 0L,
             )
-        }
+    }
+
+    suspend fun read(context: Context): AeroPrefs = decode(context.airblockStore.data.first())
+
+    fun flow(context: Context): Flow<AeroPrefs> = context.airblockStore.data.map(::decode)
 
     suspend fun setEnabled(context: Context, on: Boolean) {
         context.airblockStore.edit { p ->
             p[ENABLED] = on
             if (p[PERIOD].orEmpty() != currentPeriod()) {
                 p[PERIOD] = currentPeriod(); p[COUNT] = 0; p.remove(COST)
+                p.remove(TOKENS); p.remove(TOKENS_AT)
             }
         }
     }
 
     /**
-     * Record one billable flight query and return whether more are still
-     * allowed. Trips the switch off the moment the hard cap is reached.
+     * Ask to make one billable flight query.
+     *
+     * Counts the request BEFORE the call is made (a crash mid-request can then
+     * never let us slip past the cap) and takes one token from the [AeroPace]
+     * bucket, so callers are throttled to the rate that spreads what is left of
+     * the allowance across what is left of the month. [Spend.PACED] is a "come
+     * back later" — nothing is spent and the caller simply falls back to the
+     * geometry ETA for this tick.
      */
-    suspend fun recordRequest(context: Context): Boolean {
-        var ok = true
+    suspend fun trySpend(context: Context, nowMs: Long = System.currentTimeMillis()): Spend {
+        var result = Spend.OK
         context.airblockStore.edit { p ->
-            val now = currentPeriod()
-            val count = (if (p[PERIOD].orEmpty() == now) (p[COUNT] ?: 0) else 0) + 1
-            p[PERIOD] = now
-            p[COUNT] = count
-            if (count >= HARD_LIMIT) { p[ENABLED] = false; ok = false }
+            val period = currentPeriod()
+            val rolled = p[PERIOD].orEmpty() != period
+            if (rolled) {
+                p[PERIOD] = period; p[COUNT] = 0
+                p.remove(COST); p.remove(TOKENS); p.remove(TOKENS_AT)
+            }
+            val count = p[COUNT] ?: 0
+            val remaining = AeroPace.remainingRequests(count, p[COST])
+            if (remaining <= 0) {
+                p[ENABLED] = false
+                result = Spend.EXHAUSTED
+                return@edit
+            }
+            val tokens = AeroPace.tokensAt(p[TOKENS], p[TOKENS_AT] ?: 0L, nowMs, remaining)
+            p[TOKENS_AT] = nowMs
+            if (tokens < 1.0) {
+                p[TOKENS] = tokens
+                result = Spend.PACED
+                return@edit
+            }
+            p[TOKENS] = tokens - 1.0
+            p[COUNT] = count + 1
+            if (count + 1 >= HARD_LIMIT) p[ENABLED] = false
         }
-        return ok
+        return result
     }
 
     /**
@@ -137,6 +196,7 @@ object AeroStore {
         context.airblockStore.edit { p ->
             if (p[PERIOD].orEmpty() != currentPeriod()) {
                 p[PERIOD] = currentPeriod(); p[COUNT] = 0
+                p.remove(TOKENS); p.remove(TOKENS_AT)
             }
             costUsd?.let {
                 p[COST] = it
