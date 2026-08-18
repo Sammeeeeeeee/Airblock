@@ -6,7 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.drawable.Icon
 import com.sam.airblock.R
 import com.sam.airblock.data.Aircraft
@@ -19,9 +24,11 @@ import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.AircraftIcons
 import com.sam.airblock.util.AlertGroup
 import com.sam.airblock.util.AlertGroups
+import com.sam.airblock.util.AlertLabels
 import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.Units
+import com.sam.airblock.util.WatchEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,16 +72,24 @@ class AlertNotifier(private val context: Context) {
         prevClosestHex: String?,
         photos: PhotoRepo,
     ) {
+        // One-off watches that have outlived their window go first, so an
+        // expired entry can't fire on this tick.
+        NotifyStore.pruneExpiredWatches(context)
         val prefs = NotifyStore.read(context)
         if (!prefs.enabled) return
         val nm = context.getSystemService(NotificationManager::class.java)
         if (!nm.areNotificationsEnabled()) return // permission revoked later
 
         val hex = ac.hex.uppercase()
+        // The user's own entry for this aircraft, if any — it carries the note
+        // shown on the alert, and its "last seen" stamp is what keeps a
+        // one-off watch alive while the aircraft is still around.
+        val watch = prefs.watch.firstOrNull { it.matches(ac.callsign, ac.r, ac.hex) }
+        if (watch != null) NotifyStore.markWatchSeen(context, watch)
         val matched = AlertGroups.match(
             ac.dbFlags, ac.squawk, ac.category, alert?.category,
             prefs.groups, prefs.includeCategories, prefs.excludeCategories,
-            watch = prefs.watch.any { it.matches(ac.callsign, ac.r, ac.hex) },
+            watch = watch != null,
         )
         if (matched.isEmpty()) return
 
@@ -93,7 +108,7 @@ class AlertNotifier(private val context: Context) {
 
         // Phase 1: post NOW with the disk-cached photo, if this airframe has one
         val cached = if (photos.isCached(ac.hex)) photos.photoFor(ac.hex) else null
-        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached)
+        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached, watch)
         NotifyStore.recordNotified(context, hex, group.id)
         // Phase 2: first sighting of this airframe — fetch the photo off the
         // tick path and fill it into the notification that is already up.
@@ -103,7 +118,7 @@ class AlertNotifier(private val context: Context) {
             } ?: return@launch
             // Don't resurrect an alert the user has already swiped away
             if (nm.activeNotifications.none { it.tag == hex && it.id == NOTIF_ID_ALERT }) return@launch
-            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched)
+            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched, watch)
         }
         if (SettingsStore.read(context).logEnabled) {
             EventLog.append(context, "ALERT — ${group.label}: ${ac.callsign ?: ac.r ?: hex}")
@@ -135,6 +150,7 @@ class AlertNotifier(private val context: Context) {
         fixLat: Double,
         fixLon: Double,
         photo: PhotoRepo.CachedPhoto?,
+        watch: WatchEntry? = null,
     ) {
         val nm = context.getSystemService(NotificationManager::class.java)
         ensureChannels(context)
@@ -148,15 +164,25 @@ class AlertNotifier(private val context: Context) {
             distanceKm?.let { Units.formatKm(it) + (bearing?.let { b -> " $b" } ?: "") },
             ac.altitudeFt?.let { Units.formatAltitude(it) },
         ).joinToString(" · ")
-        // Why this alert fired: the emergency squawk, the watchlist, or the
-        // plane-alert-db category (+ operator), or the live-data special type
+        // The database's own names for this airframe, resolved the same way the
+        // widget badge resolves them (AlertLabels): the CATEGORY leads, because
+        // that is what the settings screen's switches are labelled with; the
+        // TAG is the extra detail, and rides on the photo as a pill below.
+        val category = alert?.category?.let(AlertGroups::displayName)
+        val tag = alert?.tags?.firstOrNull()?.let(AlertGroups::displayName)
+        val special = SpecialType.classify(ac.category, ac.dbFlags)
+        val primary = AlertLabels.primary(category, tag, special)
+        val pill = AlertLabels.secondary(primary, tag)
+        // Why this alert fired: the emergency squawk, the watchlist (where the
+        // user's own note is the most useful thing we can say), or the
+        // plane-alert-db category + operator
         val reason = when (group) {
             AlertGroup.EMERGENCY -> Squawk.emergencyLabel(ac.squawk)
-            AlertGroup.WATCHLIST -> "On your watchlist"
-            else -> alert?.category?.let { c ->
-                val name = AlertGroups.displayName(c)
-                alert.operator?.let { "$name · $it" } ?: name
-            } ?: SpecialType.classify(ac.category, ac.dbFlags)
+            AlertGroup.WATCHLIST -> watch?.note?.takeIf { it.isNotBlank() }
+                ?: "On your watchlist"
+            else -> primary?.let { name ->
+                alert?.operator?.let { "$name · $it" } ?: name
+            }
         }
 
         val muteIntent = Intent(context, MuteReceiver::class.java)
@@ -180,21 +206,79 @@ class AlertNotifier(private val context: Context) {
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(context, R.drawable.ic_mute),
                 "Mute this aircraft", mute).build())
-        photo?.let { p ->
-            BitmapFactory.decodeFile(p.file.absolutePath)?.let { bmp ->
-                b.setLargeIcon(bmp)
-                b.setStyle(Notification.BigPictureStyle()
-                    .bigPicture(bmp)
-                    // Collapsed shows the thumbnail, expanded the full photo —
-                    // keeping both would show the same image twice.
-                    // No summary text either: BigPictureStyle falls back to the
-                    // content text, so anything set here just repeats a line
-                    // the notification is already showing.
-                    .bigLargeIcon(null as Icon?))
-            }
+        val bitmap = photo?.let { BitmapFactory.decodeFile(it.file.absolutePath) }
+        if (bitmap != null) {
+            b.setLargeIcon(bitmap)
+            b.setStyle(Notification.BigPictureStyle()
+                // The tag is burned into the picture as a pill: Android's
+                // notification templates give us no way to style a run of text,
+                // and a custom RemoteViews layout would mean re-implementing
+                // (and re-theming) the whole notification. Drawing it matches
+                // the widget's badge exactly and can't be restyled away.
+                .bigPicture(pill?.let { drawPill(bitmap, it) } ?: bitmap)
+                // Collapsed shows the thumbnail, expanded the full photo —
+                // keeping both would show the same image twice.
+                // No summary text either: BigPictureStyle falls back to the
+                // content text, so anything set here just repeats a line
+                // the notification is already showing.
+                .bigLargeIcon(null as Icon?))
+        } else if (pill != null) {
+            // No photo to draw on — the tag still gets its own line in the
+            // expanded view rather than being lost
+            b.setStyle(Notification.BigTextStyle().bigText(body).setSummaryText(pill))
         }
         nm.notify(hex, NOTIF_ID_ALERT, b.build())
     }
+
+    /**
+     * A copy of [src] with the database tag drawn into the bottom-left as a
+     * rounded pill — the same shield-and-caps badge the widget renders, so one
+     * aircraft reads the same in the shade and on the home screen.
+     *
+     * Everything is sized off the bitmap so it lands right on any thumbnail,
+     * and a failure here (an odd config, no memory) simply returns the original
+     * picture: the badge is decoration, never a reason to lose the photo.
+     */
+    private fun drawPill(src: Bitmap, text: String): Bitmap = runCatching {
+        val out = src.copy(Bitmap.Config.ARGB_8888, true) ?: return src
+        val canvas = Canvas(out)
+        val h = out.height.toFloat()
+        val textSize = (h * 0.055f).coerceIn(13f, 34f)
+        val padH = textSize * 0.6f
+        val padV = textSize * 0.38f
+        val margin = h * 0.045f
+        val label = text.uppercase()
+
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            this.textSize = textSize
+            typeface = android.graphics.Typeface.create(
+                android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        }
+        val iconSize = textSize * 0.95f
+        val iconGap = textSize * 0.35f
+        val textWidth = textPaint.measureText(label)
+        val pillWidth = padH * 2 + iconSize + iconGap + textWidth
+        val pillHeight = padV * 2 + textSize
+        val left = margin
+        val top = h - margin - pillHeight
+        val rect = RectF(left, top, left + pillWidth, top + pillHeight)
+
+        // Material error red, matching the widget badge's GlanceTheme error
+        canvas.drawRoundRect(rect, pillHeight / 2, pillHeight / 2,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = PILL_COLOR })
+        context.getDrawable(R.drawable.ic_shield)?.let { shield ->
+            shield.setTint(Color.WHITE)
+            val iconTop = (top + pillHeight / 2 - iconSize / 2).toInt()
+            val iconLeft = (left + padH).toInt()
+            shield.setBounds(iconLeft, iconTop,
+                (iconLeft + iconSize).toInt(), (iconTop + iconSize).toInt())
+            shield.draw(canvas)
+        }
+        canvas.drawText(label, left + padH + iconSize + iconGap,
+            top + padV + textSize * 0.82f, textPaint)
+        out
+    }.getOrDefault(src)
 
     companion object {
         /** Tagged per airframe hex; the FGS notification owns id 1. */
@@ -205,6 +289,10 @@ class AlertNotifier(private val context: Context) {
          * itself is already on screen, the picture is a bonus.
          */
         private const val PHOTO_FETCH_TIMEOUT_MS = 20_000L
+
+        /** Material 3 error red — the widget badge's colour, hard-coded here
+         *  because a notification bitmap has no theme to read it from. */
+        private const val PILL_COLOR = 0xFFB3261E.toInt()
 
         /**
          * First-generation channels were IMPORTANCE_DEFAULT, which posts

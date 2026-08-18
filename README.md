@@ -21,7 +21,13 @@ Optional heads-up notifications when something worth looking up at goes over: em
 military, government, historic aircraft, drones, or your own watchlist of registrations. They ride
 on the refresh ticks already happening, so they cost no extra requests. Each alert carries the
 aircraft's **photo** — posted the instant the aircraft is seen, with the Planespotters shot filled
-into the same notification (credited, no second buzz) as soon as it downloads.
+into the same notification (no second buzz) as soon as it downloads.
+
+Aircraft are named by their plane-alert-db **category** everywhere — the widget badge, the alert,
+the settings switches — so whatever you read is a thing you can go and toggle; the database **tag**
+rides along as a pill drawn onto the alert's photo. Watchlist entries take a **note** (shown on the
+alert) and can be set to **track once**, which removes them 20 minutes after the aircraft was last
+seen — for a single flight you're waiting on.
 
 ## Data sources
 - Live aircraft: [adsb.lol](https://adsb.lol) community ADS-B network (free, no key)

@@ -73,6 +73,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.LinearWavyProgressIndicator
@@ -121,6 +122,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.coroutineScope
 import com.sam.airblock.R
 import com.sam.airblock.data.AeroApi
+import com.sam.airblock.data.AeroPace
 import com.sam.airblock.data.AeroPrefs
 import com.sam.airblock.data.AeroStore
 import com.sam.airblock.data.CategoryChoice
@@ -766,6 +768,7 @@ private fun FlightTimesCard() {
     var hasKey by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var showKeyDialog by remember { mutableStateOf(false) }
+    var showPaceInfo by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         hasKey = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -918,6 +921,14 @@ private fun FlightTimesCard() {
                                     color = meterColor,
                                 )
                             }
+                            IconButton(onClick = { showPaceInfo = true }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_info),
+                                    "how these numbers are worked out",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = cs.onSurfaceVariant,
+                                )
+                            }
                             FilledTonalIconButton(
                                 onClick = ::pollUsage,
                                 enabled = !checking,
@@ -971,7 +982,16 @@ private fun FlightTimesCard() {
     if (showKeyDialog) {
         AeroKeyDialog(onDismiss = { showKeyDialog = false }, onSave = ::saveKey)
     }
+    if (showPaceInfo) {
+        AeroPaceDialog(aero = aero, onDismiss = { showPaceInfo = false })
+    }
 }
+
+/** Epoch ms as a local "09:43", for the watchlist's seen/removes-at line. */
+private fun hm(ms: Long?): String = ms?.let {
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(it))
+} ?: "—"
 
 /**
  * Aircraft-alert notifications: master switch, per-group toggles, advanced
@@ -1119,7 +1139,8 @@ private fun NotificationsSection() {
                         color = cs.onSurface,
                     )
                     Text(
-                        "Alert whenever one of these specific aircraft is the nearest one.",
+                        "Alert whenever one of these specific aircraft is the nearest one. " +
+                            "Add a note to say why, or track one just for today.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -1142,6 +1163,13 @@ private fun NotificationsSection() {
                             fontFamily = FontFamily.Monospace,
                             color = cs.onSurface,
                         )
+                        entry.note?.takeIf { it.isNotBlank() }?.let { note ->
+                            Text(
+                                note,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onSurface,
+                            )
+                        }
                         Text(
                             listOfNotNull(
                                 entry.callsign?.takeIf { it.isNotBlank() }?.let { "callsign" },
@@ -1151,6 +1179,20 @@ private fun NotificationsSection() {
                             style = MaterialTheme.typography.labelSmall,
                             color = cs.onSurfaceVariant,
                         )
+                        // A one-off watch deletes itself, so say plainly where
+                        // it is in that lifecycle: waiting, or counting down
+                        if (entry.once) {
+                            val expiry = entry.expiresAtMs()
+                            Text(
+                                if (expiry == null)
+                                    "Tracking once · removes itself 20 min after it's seen"
+                                else
+                                    "Tracking once · seen ${hm(entry.lastSeenMs)}, " +
+                                        "removes at ${hm(expiry)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = cs.primary,
+                            )
+                        }
                     }
                     FilledTonalIconButton(
                         onClick = { scope.launch { NotifyStore.removeWatch(context, entry) } },
@@ -1398,6 +1440,8 @@ private fun WatchDialog(onDismiss: () -> Unit, onSave: (WatchEntry) -> Unit) {
     var callsign by remember { mutableStateOf("") }
     var registration by remember { mutableStateOf("") }
     var hex by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var once by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(28.dp),
@@ -1436,6 +1480,34 @@ private fun WatchDialog(onDismiss: () -> Unit, onSave: (WatchEntry) -> Unit) {
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note (optional)") },
+                    supportingText = { Text("Shown on the alert — e.g. \"Mum's flight home\"") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                // A self-deleting watch needs to say so plainly, on the screen
+                // where it's switched on — not just in the list afterwards
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Track once",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "Remove this aircraft from the list automatically, 20 minutes " +
+                                "after it was last seen overhead. For a single flight " +
+                                "you're waiting on.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(checked = once, onCheckedChange = { once = it })
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -1449,6 +1521,8 @@ private fun WatchDialog(onDismiss: () -> Unit, onSave: (WatchEntry) -> Unit) {
                                 callsign = callsign.trim().ifEmpty { null },
                                 registration = registration.trim().ifEmpty { null },
                                 hex = hex.trim().ifEmpty { null },
+                                note = note.trim().ifEmpty { null },
+                                once = once,
                             ))
                         },
                         enabled = callsign.isNotBlank() || registration.isNotBlank() ||
@@ -1456,6 +1530,112 @@ private fun WatchDialog(onDismiss: () -> Unit, onSave: (WatchEntry) -> Unit) {
                     ) {
                         Text("Add")
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * "Where do these numbers come from?" — the quota card's (i).
+ *
+ * Everything here is derived live from the same values the engine gates on, and
+ * shown as the actual arithmetic rather than a description of it: the point is
+ * that a reader can check the maths against the card behind the dialog.
+ */
+@Composable
+private fun AeroPaceDialog(aero: AeroPrefs, onDismiss: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val now = remember { System.currentTimeMillis() }
+    val monthEnd = AeroPace.monthEndMs(now)
+    val daysLeft = (monthEnd - now) / 86_400_000.0
+    val cost = aero.lastCostUsd ?: 0.0
+    val byCount = AeroStore.HARD_LIMIT - aero.requestCount
+    val byCost = ((AeroStore.BUDGET_USD - cost) / AeroStore.PER_QUERY_USD).toInt()
+    val remaining = aero.remainingRequests()
+    val perDay = aero.requestsPerDay(now)
+    val minsPer = if (perDay > 0) 1440.0 / perDay else 0.0
+    val tokens = aero.tokensNow(now)
+    val waitMin = AeroPace.nextTokenInMs(tokens, remaining, now) / 60_000.0
+    val monthName = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
+        .format(java.util.Date(monthEnd))
+
+    @Composable
+    fun Section(title: String, body: String, sum: String? = null) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = cs.onSurface)
+            sum?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = cs.primary,
+                )
+            }
+            Text(body, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = cs.surfaceContainerHigh,
+        ) {
+            Column(
+                Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    "Where these numbers come from",
+                    style = MaterialTheme.typography.titleLargeEmphasized,
+                    color = cs.onSurface,
+                )
+                Section(
+                    "The two spend figures",
+                    "FlightAware charges $%.3f per flight lookup, and your feeder allowance is $%.2f a month, resetting on the 1st. The big number is FlightAware's own total%s — authoritative, but it lags. The small one is this app counting its own calls, so it runs slightly ahead."
+                        .format(
+                            AeroStore.PER_QUERY_USD, AeroStore.BUDGET_USD,
+                            aero.lastStatus?.let { " ($it)" } ?: "",
+                        ),
+                    "%d lookups × $%.3f = $%.2f"
+                        .format(aero.requestCount, AeroStore.PER_QUERY_USD,
+                            aero.requestCount * AeroStore.PER_QUERY_USD),
+                )
+                Section(
+                    "What's left",
+                    "Two limits, and the stricter one wins — so a lagging usage figure can never talk the app into overspending. The %,d cap sits deliberately below the %,d that $%.2f actually buys, leaving a margin for the lag."
+                        .format(AeroStore.HARD_LIMIT,
+                            (AeroStore.BUDGET_USD / AeroStore.PER_QUERY_USD).toInt(),
+                            AeroStore.BUDGET_USD),
+                    "by count:  %,d − %,d = %,d\n".format(AeroStore.HARD_LIMIT, aero.requestCount, byCount) +
+                        "by spend:  ($%.2f − $%.2f) ÷ $%.3f = %,d\n"
+                            .format(AeroStore.BUDGET_USD, cost, AeroStore.PER_QUERY_USD, byCost) +
+                        "left:      %,d".format(remaining),
+                )
+                Section(
+                    "The daily rate",
+                    "Everything still affordable, spread over everything still left of the month — recalculated on every lookup. A quiet day pushes the rate up; a heavy one pushes it back down. It is not a daily quota, just this rate written in familiar units.",
+                    "%,d ÷ %.1f days to %s = %,.0f/day\none every %,.0f min"
+                        .format(remaining, daysLeft, monthName, perDay, minsPer),
+                )
+                Section(
+                    "Ready now",
+                    if (tokens >= 1)
+                        "Lookups come from a bucket holding %.0f, refilled at the rate above. That's how many brand-new flights could be looked up this second; a run of them empties it, and quiet time fills it back up."
+                            .format(AeroPace.BURST)
+                    else
+                        "The bucket is empty, so new flights show the estimated arrival worked out from distance and ground speed instead of the real schedule. Nothing is lost — the next flight along after a lookup is due gets real times again.",
+                    if (tokens >= 1) "%.0f of %.0f ready".format(tokens, AeroPace.BURST)
+                    else "0 of %.0f · next in ~%,.0f min".format(AeroPace.BURST, waitMin),
+                )
+                Section(
+                    "Why it lasts",
+                    "One lookup covers a whole flight, not each refresh: a plane overhead for an hour costs a single call, and its schedule is remembered while it stays. Lookups also only happen once a route is known, so aircraft with no filed route cost nothing at all.",
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Got it") }
                 }
             }
         }

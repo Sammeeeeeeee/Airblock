@@ -50,6 +50,12 @@ data class WatchEntry(
     val callsign: String? = null,
     val registration: String? = null,
     val hex: String? = null,
+    /** Free-text reminder of WHY this one is watched; shown on the alert. */
+    val note: String? = null,
+    /** One-off watch: deletes itself [ONCE_EXPIRY_MS] after the last sighting. */
+    val once: Boolean = false,
+    /** When this aircraft was last the nearest one; null until first seen. */
+    val lastSeenMs: Long? = null,
 ) {
     fun label(): String =
         listOfNotNull(callsign, registration, hex)
@@ -59,6 +65,19 @@ data class WatchEntry(
 
     fun isBlank(): Boolean =
         callsign.isNullOrBlank() && registration.isNullOrBlank() && hex.isNullOrBlank()
+
+    /** The fields that identify the aircraft — note/once/lastSeen are metadata. */
+    fun sameAircraftAs(other: WatchEntry): Boolean =
+        callsign.orEmpty().equals(other.callsign.orEmpty(), ignoreCase = true) &&
+            registration.orEmpty().equals(other.registration.orEmpty(), ignoreCase = true) &&
+            hex.orEmpty().equals(other.hex.orEmpty(), ignoreCase = true)
+
+    /** When a one-off watch will delete itself, or null while it has no deadline. */
+    fun expiresAtMs(): Long? =
+        if (once) lastSeenMs?.plus(ONCE_EXPIRY_MS) else null
+
+    /** True once a one-off watch has outlived its window and should be dropped. */
+    fun isExpired(nowMs: Long): Boolean = expiresAtMs()?.let { nowMs >= it } == true
 
     fun matches(callsign: String?, registration: String?, hex: String?): Boolean {
         fun norm(s: String?) = s?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
@@ -71,6 +90,15 @@ data class WatchEntry(
         if (wr != null && wr != normReg(registration)) return false
         if (wh != null && wh != norm(hex)) return false
         return true
+    }
+
+    companion object {
+        /**
+         * How long a one-off watch survives after its aircraft was last seen.
+         * Long enough to cover a plane dipping out of ADS-B coverage or leaving
+         * the radius briefly, short enough that the list tidies itself.
+         */
+        const val ONCE_EXPIRY_MS = 20L * 60 * 1000
     }
 }
 
