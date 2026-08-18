@@ -52,6 +52,7 @@ import com.sam.airblock.R
 import com.sam.airblock.data.ManufacturerLogoRepo
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.util.AlertLabels
 import com.sam.airblock.util.Units
 
 class AirblockWidget : GlanceAppWidget() {
@@ -393,10 +394,14 @@ private fun AircraftCard(
                 // the scheduled is struck through and the actual shown next to it,
                 // green when on time/early, red when late.
                 ScheduleTimesRow(state, palette)
-                // Special-aircraft tag (military, police…): left-aligned, flush
+                // Special-aircraft badge (military, police…): left-aligned, flush
                 // with the title column's left edge, directly under the type —
-                // it used to float at the far right, reading as detached
-                val badge = state.alertTag ?: state.specialType
+                // it used to float at the far right, reading as detached.
+                // It names the DATABASE CATEGORY, which is what the settings
+                // screen's per-category switches are labelled with — see
+                // AlertLabels.
+                val badge = AlertLabels.primary(
+                    state.alertCategory, state.alertTag, state.specialType)
                 badge?.let { tag ->
                     Spacer(GlanceModifier.height(3.dp))
                     Row(
@@ -418,7 +423,10 @@ private fun AircraftCard(
                             style = TextStyle(fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = GlanceTheme.colors.onError),
-                            maxLines = 1,
+                            // Categories run longer than the tags this used to
+                            // show ("ROYAL NAVY FLEET AIR ARM"); wrap rather
+                            // than clip a name mid-word
+                            maxLines = 2,
                         )
                     }
                 }

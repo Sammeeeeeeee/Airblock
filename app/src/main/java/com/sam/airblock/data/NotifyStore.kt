@@ -54,6 +54,9 @@ object NotifyStore {
     /** Re-notify the same airframe at most once per this window. */
     const val COOLDOWN_MS = 45L * 60 * 1000
 
+    /** Don't re-stamp a one-off watch's "last seen" more often than this. */
+    private const val SEEN_WRITE_MS = 60L * 1000
+
     private val ENABLED = booleanPreferencesKey("notify_enabled")
     private val GROUPS = stringSetPreferencesKey("notify_groups")
     private val CAT_INCLUDE = stringSetPreferencesKey("notify_cat_include")
@@ -137,8 +140,36 @@ object NotifyStore {
         editWatch(context) { it + entry }
     }
 
+    /** Removed by the aircraft it names — its note/seen metadata may have moved on. */
     suspend fun removeWatch(context: Context, entry: WatchEntry) {
-        editWatch(context) { it - entry }
+        editWatch(context) { list -> list.filterNot { it.sameAircraftAs(entry) } }
+    }
+
+    /**
+     * Stamp a watched aircraft as seen right now, which is what holds a
+     * one-off watch open ([WatchEntry.ONCE_EXPIRY_MS] after the LAST sighting).
+     *
+     * Throttled to [SEEN_WRITE_MS]: the tick runs every 15 s while an aircraft
+     * stays overhead, and the expiry window is measured in tens of minutes, so
+     * writing a fresh stamp on every tick would be all cost and no accuracy.
+     */
+    suspend fun markWatchSeen(context: Context, entry: WatchEntry) {
+        if (!entry.once) return // permanent watches don't need the bookkeeping
+        val now = System.currentTimeMillis()
+        if (entry.lastSeenMs != null && now - entry.lastSeenMs < SEEN_WRITE_MS) return
+        editWatch(context) { list ->
+            list.map { if (it.sameAircraftAs(entry)) it.copy(lastSeenMs = now) else it }
+        }
+    }
+
+    /** Drop one-off watches whose aircraft hasn't been seen for the window. */
+    suspend fun pruneExpiredWatches(
+        context: Context,
+        nowMs: Long = System.currentTimeMillis(),
+    ) {
+        val current = read(context).watch
+        if (current.none { it.isExpired(nowMs) }) return // no write in the common case
+        editWatch(context) { list -> list.filterNot { it.isExpired(nowMs) } }
     }
 
     private suspend fun editWatch(
