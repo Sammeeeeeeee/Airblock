@@ -946,26 +946,24 @@ private fun FlightTimesCard() {
                             modifier = Modifier.fillMaxWidth(),
                         )
                         if (!aero.exhausted()) {
-                            // What the pacer is doing right now, in plain words
+                            // Live buffer first, then the rate it refills at
                             Text(
-                                "Paced to ~%,.0f lookups/day · %d ready now"
-                                    .format(perDay, ready),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = cs.onSurfaceVariant,
+                                "%d ready · ~%,.0f/day".format(ready, perDay),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = cs.onSurface,
                             )
                         }
                     }
                 }
                 if (aero.exhausted()) {
                     Text(
-                        "Monthly free usage used up — paused until next month.",
+                        "Free allowance used up. Paused until next month.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.error,
                     )
                 } else if (paced) {
                     Text(
-                        "Spreading what's left over the rest of the month — flights use " +
-                            "the estimated time until the next lookup is due.",
+                        "Flights use the estimated time until the next lookup is due.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                     )
@@ -1593,46 +1591,36 @@ private fun AeroPaceDialog(aero: AeroPrefs, onDismiss: () -> Unit) {
                     color = cs.onSurface,
                 )
                 Section(
-                    "The two spend figures",
-                    "FlightAware charges $%.3f per flight lookup, and your feeder allowance is $%.2f a month, resetting on the 1st. The big number is FlightAware's own total%s — authoritative, but it lags. The small one is this app counting its own calls, so it runs slightly ahead."
-                        .format(
-                            AeroStore.PER_QUERY_USD, AeroStore.BUDGET_USD,
-                            aero.lastStatus?.let { " ($it)" } ?: "",
-                        ),
-                    "%d lookups × $%.3f = $%.2f"
+                    "Spend",
+                    "Top line is FlightAware's bill%s. It lags. Bottom line is the app's own count."
+                        .format(aero.lastStatus?.let { " ($it)" } ?: ""),
+                    "%d × $%.3f = $%.2f"
                         .format(aero.requestCount, AeroStore.PER_QUERY_USD,
                             aero.requestCount * AeroStore.PER_QUERY_USD),
                 )
                 Section(
                     "What's left",
-                    "Two limits, and the stricter one wins — so a lagging usage figure can never talk the app into overspending. The %,d cap sits deliberately below the %,d that $%.2f actually buys, leaving a margin for the lag."
-                        .format(AeroStore.HARD_LIMIT,
-                            (AeroStore.BUDGET_USD / AeroStore.PER_QUERY_USD).toInt(),
-                            AeroStore.BUDGET_USD),
+                    "Two limits. The smaller wins, so the app cannot overspend.",
                     "by count:  %,d − %,d = %,d\n".format(AeroStore.HARD_LIMIT, aero.requestCount, byCount) +
                         "by spend:  ($%.2f − $%.2f) ÷ $%.3f = %,d\n"
                             .format(AeroStore.BUDGET_USD, cost, AeroStore.PER_QUERY_USD, byCost) +
                         "left:      %,d".format(remaining),
                 )
                 Section(
-                    "The daily rate",
-                    "Everything still affordable, spread over everything still left of the month — recalculated on every lookup. A quiet day pushes the rate up; a heavy one pushes it back down. It is not a daily quota, just this rate written in familiar units.",
+                    "Daily rate",
+                    "What is left, divided by the days left. Quiet days raise the rate. Not a daily limit.",
                     "%,d ÷ %.1f days to %s = %,.0f/day\none every %,.0f min"
                         .format(remaining, daysLeft, monthName, perDay, minsPer),
                 )
                 Section(
                     "Ready now",
                     if (tokens >= 1)
-                        "Lookups come from a bucket holding %.0f, refilled at the rate above. That's how many brand-new flights could be looked up this second; a run of them empties it, and quiet time fills it back up."
+                        "New flights draw from a bucket of %.0f. It refills at this rate."
                             .format(AeroPace.BURST)
                     else
-                        "The bucket is empty, so new flights show the estimated arrival worked out from distance and ground speed instead of the real schedule. Nothing is lost — the next flight along after a lookup is due gets real times again.",
+                        "The bucket is empty. New flights show the estimated time. Real times return after the next refill.",
                     if (tokens >= 1) "%.0f of %.0f ready".format(tokens, AeroPace.BURST)
                     else "0 of %.0f · next in ~%,.0f min".format(AeroPace.BURST, waitMin),
-                )
-                Section(
-                    "Why it lasts",
-                    "One lookup covers a whole flight, not each refresh: a plane overhead for an hour costs a single call, and its schedule is remembered while it stays. Lookups also only happen once a route is known, so aircraft with no filed route cost nothing at all.",
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Got it") }
