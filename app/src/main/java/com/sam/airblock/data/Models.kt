@@ -41,7 +41,17 @@ data class Aircraft(
     val lat: Double? = null,
     val lon: Double? = null,
 ) {
-    val callsign: String? get() = flight?.trim()?.takeIf { it.isNotEmpty() }
+    /**
+     * Callsign, or null when the aircraft transmits no ident. The Mode-S
+     * ident field is eight characters of the ICAO 6-bit alphabet, whose code
+     * 0 is '@' — a blank ident reaches us as "@@@@@@@@" and a short one as
+     * "BOX426@@". Strip that padding along with the API's trailing spaces,
+     * and treat what's left as a callsign only if it still has real
+     * characters in it.
+     */
+    val callsign: String? get() = flight
+        ?.trim { it.isWhitespace() || it == '@' }
+        ?.takeIf { it.isNotEmpty() && it.any(Char::isLetterOrDigit) }
     val altitudeFt: Int? get() = altBaro?.intOrNull // null when "ground" or absent
     val onGround: Boolean get() = altBaro?.content == "ground"
 }

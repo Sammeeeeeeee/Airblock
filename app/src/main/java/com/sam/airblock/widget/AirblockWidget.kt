@@ -296,8 +296,14 @@ private fun AircraftCard(
                     // heavy, tight expressive weights
                     val callsignText = state.callsign ?: "—"
                     val callsignColor = palette.onBg.getColor(context).toArgb()
+                    // Fit the bitmap to the width this column ACTUALLY has:
+                    // the widget minus the card's 10dp padding a side, the
+                    // photo and the 12dp gap. Guessing at 0.62 of the widget
+                    // overshot that, so long callsigns ran off the card's
+                    // right edge instead of scaling down.
+                    val titleWidth = widgetSize.width - photoWidth - 32.dp
                     val maxCallsignWidthPx =
-                        ((widgetSize.width.value * 0.62f - 24f) * density).toInt()
+                        (titleWidth.value * density).toInt().coerceAtLeast(1)
                     val callsignBmp = remember(callsignText, callsignColor, maxCallsignWidthPx) {
                         expressiveText(callsignText, callsignColor,
                             heightPx = (28 * density).toInt(), maxWidthPx = maxCallsignWidthPx)
@@ -827,7 +833,9 @@ private fun ChipsRow(state: WidgetState) {
             bg = GlanceTheme.colors.primaryContainer,
             fg = GlanceTheme.colors.onPrimaryContainer,
         )
-        state.registration?.let { reg ->
+        // …unless the registration IS the headline (an aircraft sending no
+        // ident falls back to it) — the same code twice is just clutter
+        state.registration?.takeIf { it != state.callsign }?.let { reg ->
             ChipGap()
             // No icon: a tag glyph says nothing the registration text doesn't,
             // and this row hasn't a dp to spare — it's the chip that clips
