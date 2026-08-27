@@ -57,6 +57,28 @@ class ParsingTest {
         assertTrue(ac.onGround)
     }
 
+    /**
+     * An aircraft transmitting no ident comes through as the Mode-S ident
+     * field's padding character, '@' (code 0 of the ICAO 6-bit alphabet).
+     * That is an absent callsign, not a callsign made of at-signs — the
+     * widget rendered "@@@@@@@@" as its headline before this was filtered.
+     */
+    @Test fun blankIdentIsNoCallsign() {
+        val json = """{"ac":[{"hex":"4009f8","flight":"@@@@@@@@","r":"G-DHLK"}]}"""
+        assertNull(Http.json.decodeFromString<ClosestResponse>(json).ac.single().callsign)
+    }
+
+    @Test fun stripsIdentPadding() {
+        val json = """{"ac":[{"hex":"4009f8","flight":"BCS453@@"}]}"""
+        assertEquals("BCS453",
+            Http.json.decodeFromString<ClosestResponse>(json).ac.single().callsign)
+    }
+
+    @Test fun blankIdentOfSpacesIsNoCallsign() {
+        val json = """{"ac":[{"hex":"4009f8","flight":"        "}]}"""
+        assertNull(Http.json.decodeFromString<ClosestResponse>(json).ac.single().callsign)
+    }
+
     @Test fun parsesEmptyResponse() {
         val json = """{"ac":[],"msg":"No error","total":0}"""
         assertTrue(Http.json.decodeFromString<ClosestResponse>(json).ac.isEmpty())
