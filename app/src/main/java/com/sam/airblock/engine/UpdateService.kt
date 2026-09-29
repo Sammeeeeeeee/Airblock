@@ -324,6 +324,9 @@ class UpdateService : Service() {
             WidgetStateStore.update(context) {
                 it.copy(refreshing = false, refreshStage = null, errorCount = 0)
             }
+            // Cached render bitmaps (callsign, photo…) are drawn for one
+            // display density — rebuild them for the current screen too
+            AirblockWidget.resetRenderCaches()
             delay(400)
             AirblockWidget().updateAll(context) // recreates fresh sessions
             KeepAliveWorker.schedule(context)

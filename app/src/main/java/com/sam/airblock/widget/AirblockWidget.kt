@@ -1,15 +1,19 @@
 package com.sam.airblock.widget
 
+import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.util.SizeF
+import android.util.TypedValue
+import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.ColorFilter
@@ -21,8 +25,10 @@ import androidx.glance.LocalSize
 import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.action.clickable
+import androidx.glance.appwidget.AndroidRemoteViews
 import androidx.glance.appwidget.CircularProgressIndicator
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.LocalAppWidgetOptions
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.action.actionStartActivity
@@ -32,7 +38,6 @@ import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
-import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.RowScope
 import androidx.glance.layout.Spacer
@@ -54,48 +59,120 @@ import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.AlertLabels
 import com.sam.airblock.util.Units
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.stateIn
+import kotlin.math.roundToInt
 
 class AirblockWidget : GlanceAppWidget() {
 
-    // Exact size so the layout can compute a true 3:2 photo box
-    override val sizeMode: SizeMode = SizeMode.Exact
+    // Height TIERS, and the LAUNCHER picks one. SizeMode.Exact laid the card
+    // out for the size the launcher last reported — and after a screen
+    // resolution switch (FHD+ → WQHD+) Niagara gave the widget ~25% fewer dp,
+    // crushing the full layout into it: a thumbnail-sized photo stranded in a
+    // wide empty box, header lines clipped. With Responsive sizes an Android
+    // 12+ host re-picks, on every layout pass, the tallest tier that fits the
+    // space it ACTUALLY gave the widget — no report, re-render or restart
+    // involved. The tier width is nominal (every real widget is wider);
+    // width-driven sizing reads the reported width, which launchers get right.
+    override val sizeMode: SizeMode = SizeMode.Responsive(
+        CardFit.TIERS_DP.map { DpSize(TIER_WIDTH_DP.dp, it.dp) }.toSet())
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // provideGlance runs ONCE per widget session; updateAll() only
         // recomposes. State must therefore be observed INSIDE the composition,
         // otherwise the widget keeps rendering a stale snapshot while the
         // process is alive (the bug: app showed fresh data, widget didn't).
-        val initial = WidgetStateStore.read(context)
-        provideContent {
-            val state by WidgetStateStore.flow(context).collectAsState(initial)
-            val photo = remember(state.photoPath) {
-                state.photoPath?.let { decodePhoto(it) }
-            }
-            val airlineLogo = remember(state.airlineLogoPath) {
-                state.airlineLogoPath?.let { BitmapFactory.decodeFile(it) }
-            }
-            val manufacturerLogo = remember(state.manufacturerLogoPath) {
-                state.manufacturerLogoPath?.let { BitmapFactory.decodeFile(it) }
-            }
-            val modelLogo = remember(state.modelLogoPath) {
-                state.modelLogoPath?.let { BitmapFactory.decodeFile(it) }
-            }
-            GlanceTheme {
-                WidgetContent(state, photo, airlineLogo, manufacturerLogo, modelLogo)
+        coroutineScope {
+            val initial = WidgetStateStore.read(context)
+            // ONE collection shared by every tier's composition, deduplicated
+            // on what the widget draws: the refresh checklist alone changes
+            // several times per tick, and each change re-sent every tier
+            val states = WidgetStateStore.flow(context)
+                .distinctUntilChangedBy { it.drawnFields() }
+                .stateIn(this, SharingStarted.Eagerly, initial)
+            provideContent {
+                val state by states.collectAsState()
+                val airlineLogo = state.airlineLogoPath?.let { decodeShared(it) }
+                val manufacturerLogo = state.manufacturerLogoPath?.let { decodeShared(it) }
+                val modelLogo = state.modelLogoPath?.let { decodeShared(it) }
+                GlanceTheme {
+                    WidgetContent(state, airlineLogo, manufacturerLogo, modelLogo)
+                }
             }
         }
     }
 
-    /** Decode bounded — thumbnails are ~280 px already, just guard against surprises. */
-    private fun decodePhoto(path: String): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, bounds)
-        if (bounds.outWidth <= 0) return null
-        val sample = (bounds.outWidth / 400).coerceAtLeast(1)
-        return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply {
-            inSampleSize = sample
-        })
+    companion object {
+        /**
+         * Drop every cached render bitmap (callsign, photo, logos…) so the
+         * next composition redraws them for the current display — part of
+         * the Force full restart.
+         */
+        fun resetRenderCaches() = SharedBitmaps.clear()
     }
+}
+
+/** Nominal width of every height tier: narrower than any real placement. */
+private const val TIER_WIDTH_DP = 200f
+
+/** The photo never takes more than this share of the widget's width. */
+private const val PHOTO_WIDTH_FRACTION = 0.42f
+
+/** The state minus what the widget never draws (see provideGlance). */
+private fun WidgetState.drawnFields() = copy(
+    hex = null, photoCredit = null, refreshStage = null, stages = emptyList(),
+    lastError = null, modeLabel = null, errorCount = errorCount.coerceAtMost(1),
+)
+
+/**
+ * Bitmaps shared by all the height tiers. Each tier is its own composition, so
+ * a `remember`ed bitmap existed once PER TIER — and RemoteViews dedupes bitmaps
+ * by identity, so every copy would ride along on every update. Keyed by all
+ * that the pixels depend on; the least recently used fall out.
+ */
+private object SharedBitmaps {
+    private const val MAX_ENTRIES = 16
+    private val cache = object : LinkedHashMap<String, Bitmap>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?) =
+            size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun get(key: String, make: () -> Bitmap?): Bitmap? =
+        cache[key] ?: make()?.also { cache[key] = it }
+
+    @Synchronized
+    fun clear() = cache.clear()
+}
+
+private fun decodeShared(path: String): Bitmap? =
+    SharedBitmaps.get("file|$path") { BitmapFactory.decodeFile(path) }
+
+/** Decode bounded — thumbnails are ~280 px already, just guard against surprises. */
+private fun decodePhoto(path: String): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0) return null
+    val sample = (bounds.outWidth / 400).coerceAtLeast(1)
+    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply {
+        inSampleSize = sample
+    })
+}
+
+/**
+ * The widget's width as the launcher reports it (the smallest, if it reports
+ * several). Launchers get width right — it's height they misreport.
+ */
+@Composable
+private fun reportedWidthDp(): Float {
+    val options = LocalAppWidgetOptions.current
+    @Suppress("DEPRECATION") // typed overload is API 33; minSdk is 31
+    val sizes = options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES)
+    val width = sizes?.minOfOrNull { it.width }
+        ?: options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH).toFloat()
+    return if (width > 0f) width else 250f // the declared minWidth
 }
 
 /** Content colors paired with the widget background (varies for special aircraft). */
@@ -131,7 +208,6 @@ private fun widgetPalette(state: WidgetState): WidgetPalette {
 @Composable
 private fun WidgetContent(
     state: WidgetState,
-    photo: Bitmap?,
     airlineLogo: Bitmap?,
     manufacturerLogo: Bitmap?,
     modelLogo: Bitmap?,
@@ -141,20 +217,22 @@ private fun WidgetContent(
     // container role or dark-theme contrast breaks.
     val palette = widgetPalette(state)
     val bg = palette.bg
+    val fit = cardFit(LocalContext.current, LocalSize.current.height.value, state,
+        hasModelLogo = modelLogo != null, hasAirlineLogo = airlineLogo != null)
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(bg)
             // Match the corner radius the launcher clips widgets to
             .cornerRadius(android.R.dimen.system_app_widget_background_radius)
-            .padding(10.dp)
+            .padding(fit.pad.dp)
             // Blank space taps still mean "refresh now"; the info elements
             // (photo, route, chips) carry their own open-the-app actions
             .clickable(actionRunCallback<RefreshAction>()),
     ) {
         when (state.status) {
             WidgetState.Status.OK ->
-                AircraftCard(state, photo, airlineLogo, manufacturerLogo, modelLogo, palette)
+                AircraftCard(state, airlineLogo, manufacturerLogo, modelLogo, palette, fit)
             WidgetState.Status.NO_AIRCRAFT -> EmptyMessage("No aircraft nearby")
             WidgetState.Status.NO_LOCATION -> EmptyMessage("Location unavailable — tap to retry")
             else -> EmptyMessage("Airblock — tap to refresh")
@@ -219,20 +297,20 @@ private fun StatusBadge(state: WidgetState) {
 @Composable
 private fun AircraftCard(
     state: WidgetState,
-    photo: Bitmap?,
     airlineLogo: Bitmap?,
     manufacturerLogo: Bitmap?,
     modelLogo: Bitmap?,
     palette: WidgetPalette,
+    fit: CardFit,
 ) {
-    val widgetSize = LocalSize.current
     val context = LocalContext.current
     val density = context.resources.displayMetrics.density
-    // Photo sizing FROM WIDTH ONLY. Launchers (Niagara et al.) misreport the
-    // widget's height bucket — deriving the photo from height is what made it
-    // render as a narrow cropped strip (v2.2) or a tiny thumbnail (later).
-    // Width is the one dimension launchers report reliably.
-    val photoWidth = widgetSize.width * 0.42f
+    // Only the photo's CAP comes from the (reliably reported) width; its
+    // actual size is set by the launcher from the real row height — see
+    // PhotoFrame. Launchers (Niagara et al.) misreport height, which is what
+    // made the photo a narrow cropped strip (v2.2) or a tiny thumbnail later.
+    val widthDp = reportedWidthDp()
+    val photoMaxWidth = widthDp * PHOTO_WIDTH_FRACTION
 
     Column(modifier = GlanceModifier.fillMaxSize()) {
         // Top row: landscape photo + callsign/type side by side
@@ -240,54 +318,29 @@ private fun AircraftCard(
             modifier = GlanceModifier.fillMaxWidth().defaultWeight(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // cornerRadius clips the VIEW — a Fit-letterboxed bitmap sits
-            // inside the view, so its corners came out square. Bake the
-            // rounding into the bitmap's pixels instead.
-            val roundedPhoto = remember(state.photoPath, photoWidth.value) {
-                photo?.let {
-                    roundCorners(it, it.width * 16f / photoWidth.value.coerceAtLeast(1f))
+            // Corners are baked into the pixels at the size the photo shows
+            // when it hits its width cap (then it is letterboxed inside its
+            // view, and clipping the view can't reach the photo's corners);
+            // below the cap the frame hugs the photo and its 16dp clip rounds.
+            val photo = state.photoPath?.let { path ->
+                SharedBitmaps.get("photo|$path|${photoMaxWidth.roundToInt()}") {
+                    decodePhoto(path)?.let { roundCorners(it, it.width * 16f / photoMaxWidth) }
+                }
+            } ?: run {
+                // No photo (yet): the type's silhouette on a tonal rounded
+                // card, drawn as a BITMAP — RemoteViews mangled the tinted
+                // vector (it rendered as a solid slab), and canvas drawing
+                // is what the route path and callsign already use.
+                val phBg = GlanceTheme.colors.surfaceVariant.getColor(context).toArgb()
+                val phFg = GlanceTheme.colors.onSurfaceVariant.getColor(context).toArgb()
+                val icon = com.sam.airblock.util.AircraftIcons.iconFor(
+                    state.typeCode, state.category)
+                SharedBitmaps.get("placeholder|$icon|$phBg|$phFg|${photoMaxWidth.roundToInt()}") {
+                    photoPlaceholderBitmap(context, icon, bg = phBg, fg = phFg,
+                        cornerPx = 480f * 16f / photoMaxWidth)
                 }
             }
-            val photoBox = GlanceModifier.fillMaxHeight().width(photoWidth).cornerRadius(16.dp)
-                .clickable(
-                    androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>())
-            Box(
-                modifier = photoBox,
-                contentAlignment = Alignment.Center,
-            ) {
-                if (roundedPhoto != null) {
-                    Image(
-                        provider = ImageProvider(roundedPhoto),
-                        contentDescription = state.typeName,
-                        contentScale = ContentScale.Fit,
-                        modifier = GlanceModifier.fillMaxSize(),
-                    )
-                } else {
-                    // No photo (yet): the type's silhouette on a tonal rounded
-                    // card, drawn as a BITMAP — RemoteViews mangled the tinted
-                    // vector (it rendered as a solid slab), and canvas drawing
-                    // is what the route path and callsign already use.
-                    val phBg = GlanceTheme.colors.surfaceVariant.getColor(context).toArgb()
-                    val phFg = GlanceTheme.colors.onSurfaceVariant.getColor(context).toArgb()
-                    val placeholder = remember(
-                        state.typeCode, state.category, phBg, phFg, photoWidth.value,
-                    ) {
-                        photoPlaceholderBitmap(
-                            context,
-                            com.sam.airblock.util.AircraftIcons.iconFor(
-                                state.typeCode, state.category),
-                            bg = phBg, fg = phFg,
-                            cornerPx = 480f * 16f / photoWidth.value.coerceAtLeast(1f),
-                        )
-                    }
-                    Image(
-                        provider = ImageProvider(placeholder),
-                        contentDescription = state.typeName,
-                        contentScale = ContentScale.Fit,
-                        modifier = GlanceModifier.fillMaxSize(),
-                    )
-                }
-            }
+            photo?.let { PhotoFrame(it, state.typeName, photoMaxWidth) }
             Spacer(GlanceModifier.width(12.dp))
             Column(modifier = GlanceModifier.defaultWeight()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -296,26 +349,32 @@ private fun AircraftCard(
                     // heavy, tight expressive weights
                     val callsignText = state.callsign ?: "—"
                     val callsignColor = palette.onBg.getColor(context).toArgb()
+                    // The narrowest the title column gets: photo at its cap
                     val maxCallsignWidthPx =
-                        ((widgetSize.width.value * 0.62f - 24f) * density).toInt()
-                    val callsignBmp = remember(callsignText, callsignColor, maxCallsignWidthPx) {
+                        ((widthDp - 2 * fit.pad - photoMaxWidth - 16f) * density).toInt()
+                    val callsignHeightPx = (fit.callsignDp * density).toInt()
+                    val callsignBmp = SharedBitmaps.get(
+                        "callsign|$callsignText|$callsignColor|$callsignHeightPx|$maxCallsignWidthPx",
+                    ) {
                         expressiveText(callsignText, callsignColor,
-                            heightPx = (28 * density).toInt(), maxWidthPx = maxCallsignWidthPx)
+                            heightPx = callsignHeightPx, maxWidthPx = maxCallsignWidthPx)
                     }
                     // (FR24 deep-linking removed: the app intercepts the URL
                     // but just opens its website view — no public deep-link
                     // API exists, so the tap falls through to refresh)
-                    Image(
-                        provider = ImageProvider(callsignBmp),
-                        contentDescription = callsignText,
-                        modifier = GlanceModifier
-                            .width((callsignBmp.width / density).dp)
-                            .height((callsignBmp.height / density).dp),
-                    )
+                    callsignBmp?.let { bmp ->
+                        Image(
+                            provider = ImageProvider(bmp),
+                            contentDescription = callsignText,
+                            modifier = GlanceModifier
+                                .width((bmp.width / density).dp)
+                                .height((bmp.height / density).dp),
+                        )
+                    }
                 }
                 // Type line: manufacturer WORDMARK (tinted to theme) + model,
                 // falling back to the full text when no logo is cached
-                state.typeName?.let { typeName ->
+                state.typeName?.takeIf { fit.typeLine }?.let { typeName ->
                     val mfr = manufacturerLogo?.let {
                         ManufacturerLogoRepo.manufacturerOf(typeName)?.let { name ->
                             name to ManufacturerLogoRepo.modelOf(typeName, name)
@@ -368,7 +427,7 @@ private fun AircraftCard(
                 }
                 // The operating airline (medium weight) with the flight number
                 // beside it lighter — told apart by weight/colour, no chrome.
-                if (state.airlineName != null || state.flightNumber != null) {
+                if (fit.airline) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         state.airlineName?.let { airline ->
                             Text(
@@ -393,7 +452,7 @@ private fun AircraftCard(
                 // Scheduled dep–arr times, faded italic. Where the actual differs
                 // the scheduled is struck through and the actual shown next to it,
                 // green when on time/early, red when late.
-                ScheduleTimesRow(state, palette)
+                if (fit.times) ScheduleTimesRow(state, palette)
                 // Special-aircraft badge (military, police…): left-aligned, flush
                 // with the title column's left edge, directly under the type —
                 // it used to float at the far right, reading as detached.
@@ -402,7 +461,7 @@ private fun AircraftCard(
                 // AlertLabels.
                 val badge = AlertLabels.primary(
                     state.alertCategory, state.alertTag, state.specialType)
-                badge?.let { tag ->
+                badge?.takeIf { fit.badge }?.let { tag ->
                     Spacer(GlanceModifier.height(3.dp))
                     Row(
                         modifier = GlanceModifier
@@ -432,19 +491,144 @@ private fun AircraftCard(
                 }
             }
         }
-        Spacer(GlanceModifier.height(6.dp))
-        RouteRow(state, airlineLogo)
-        Spacer(GlanceModifier.height(6.dp))
+        Spacer(GlanceModifier.height(fit.gap.dp))
+        RouteRow(state, airlineLogo, fit.compact)
+        Spacer(GlanceModifier.height(fit.gap.dp))
         ChipsRow(state)
     }
 }
 
 /**
- * The middle row: the route pill takes all width up to the airline-logo
- * badge, which sits NEXT TO it on the right as its own element.
+ * The photo (or placeholder) as a plain ImageView with adjustViewBounds, so
+ * the LAUNCHER sizes it: full top-row height, width from the bitmap's own
+ * aspect, capped at [maxWidthDp]. The frame hugs the picture at whatever
+ * height the widget really has — a Glance Image needs a fixed width up front,
+ * and a fixed width sized for the wrong height left a thumbnail stranded in a
+ * wide empty box.
  */
 @Composable
-private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
+private fun PhotoFrame(bitmap: Bitmap, description: String?, maxWidthDp: Float) {
+    val context = LocalContext.current
+    val views = RemoteViews(context.packageName, R.layout.widget_photo).apply {
+        setImageViewBitmap(R.id.widget_photo, bitmap)
+        setIntDimen(R.id.widget_photo, "setMaxWidth", maxWidthDp, TypedValue.COMPLEX_UNIT_DIP)
+        setContentDescription(R.id.widget_photo, description)
+    }
+    AndroidRemoteViews(
+        remoteViews = views,
+        modifier = GlanceModifier.fillMaxHeight().cornerRadius(16.dp)
+            .clickable(
+                androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
+    )
+}
+
+/**
+ * What the aircraft card shows at one height tier. The old fixed layout needed
+ * ~170dp and simply overflowed anything shorter; now whole lines are taken in
+ * priority order only while they fit, and short tiers drop the pill's city
+ * names so the photo row keeps its height. Text heights are measured from the
+ * live font, so a bigger font size or another system font still fits.
+ */
+private class CardFit(
+    /** Route pill without city names, tighter spacing. */
+    val compact: Boolean,
+    val pad: Float,
+    val gap: Float,
+    /** Box height the callsign bitmap is drawn for. */
+    val callsignDp: Float,
+    val typeLine: Boolean,
+    val badge: Boolean,
+    val airline: Boolean,
+    val times: Boolean,
+) {
+    companion object {
+        /**
+         * Tier heights (dp), each where one more thing starts to fit: callsign
+         * only · + type · + airline · city names back · + times. 170 is the
+         * full original layout.
+         */
+        val TIERS_DP = listOf(100f, 124f, 140f, 156f, 170f)
+        /** From here the route pill has room for the city names again. */
+        const val FULL_FROM_DP = 156f
+        /** Margin for rounding and emoji-height lines. */
+        const val SLACK_DP = 2f
+    }
+}
+
+private fun cardFit(
+    context: Context,
+    tierDp: Float,
+    state: WidgetState,
+    hasModelLogo: Boolean,
+    hasAirlineLogo: Boolean,
+): CardFit {
+    val metrics = context.resources.displayMetrics
+    val density = metrics.density
+    // One line of text as a TextView lays it out (font padding included), dp
+    fun line(sp: Float): Float {
+        val paint = Paint().apply {
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, metrics)
+        }
+        val fm = paint.fontMetrics
+        return (fm.bottom - fm.top) / density
+    }
+    fun callsignHeight(boxDp: Float): Float {
+        val fm = expressivePaint(0, (boxDp * density).toInt()).fontMetrics
+        return (fm.descent - fm.ascent) / density
+    }
+
+    val compact = tierDp < CardFit.FULL_FROM_DP
+    val pad = if (compact) 8f else 10f
+    val gap = if (compact) 4f else 6f
+    // Mirrors RouteRow / RoutePill / AirlineLogoBadge / ChipsRow paddings
+    val hasRoute = state.originIata != null || state.destIata != null
+    val routeLoading = !hasRoute && state.refreshing
+    val pill = when {
+        hasRoute -> 2 * (if (compact) 3f else 5f) + maxOf(
+            line(15f) + (if (compact) 0f else line(10f)), // codes (+ cities)
+            14f + line(10f),                               // path + times
+        )
+        routeLoading -> 2 * (if (compact) 8f else 10f) + maxOf(12f, line(11f))
+        else -> 0f
+    }
+    val logoBadge = if (hasAirlineLogo) (if (compact) 30f else 34f) else 0f
+    val chips = 8f + maxOf(10f, line(10f))
+    val budget = tierDp - 2 * pad - 2 * gap - maxOf(pill, logoBadge) - chips - CardFit.SLACK_DP
+
+    val typeH = when {
+        state.typeName == null -> 0f
+        hasModelLogo -> 13f
+        else -> maxOf(11f, line(12f))
+    }
+    val tag = AlertLabels.primary(state.alertCategory, state.alertTag, state.specialType)
+    val badgeH = if (tag == null) 0f
+    else 3f + 4f + maxOf(9f, line(9f) * (if (tag.length > 16) 2 else 1))
+    val airlineH = if (state.airlineName != null || state.flightNumber != null) line(10f) else 0f
+    val timesH = if (state.schedDepLocal != null) line(9f) else 0f
+
+    // The callsign always shows; it shrinks before the type line is given up
+    val sizes = listOf(28f, 24f, 20f)
+    val withType = sizes.firstOrNull { callsignHeight(it) + typeH <= budget }
+    val typeLine = withType != null && typeH > 0f
+    val callsign = withType
+        ?: sizes.firstOrNull { callsignHeight(it) <= budget }
+        ?: sizes.last()
+    var used = callsignHeight(callsign) + if (typeLine) typeH else 0f
+    // Then by importance: special-aircraft badge, airline, scheduled times
+    fun take(h: Float): Boolean = (h > 0f && used + h <= budget).also { if (it) used += h }
+    val badge = take(badgeH)
+    val airline = take(airlineH)
+    val times = take(timesH)
+    return CardFit(compact, pad, gap, callsign, typeLine, badge, airline, times)
+}
+
+/**
+ * The middle row: the route pill takes all width up to the airline-logo
+ * badge, which sits NEXT TO it on the right as its own element. [compact]
+ * (short widgets) drops the city names and slims the pill and badge.
+ */
+@Composable
+private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?, compact: Boolean) {
     val hasRoute = state.originIata != null || state.destIata != null
     // Until the route fetch settles, hold the space with a loading pill —
     // confirmed-no-route (refresh done, still no airports) shows nothing
@@ -457,14 +641,16 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
         // Weight on a plain Box, with the pill filling it — more reliable
         // across launchers than weighting the complex pill row directly
         when {
-            hasRoute -> Box(modifier = GlanceModifier.defaultWeight()) { RoutePill(state) }
+            hasRoute -> Box(modifier = GlanceModifier.defaultWeight()) {
+                RoutePill(state, compact)
+            }
             routeLoading -> Box(modifier = GlanceModifier.defaultWeight()) {
                 Row(
                     modifier = GlanceModifier
                         .fillMaxWidth()
                         .background(GlanceTheme.colors.surfaceVariant)
                         .cornerRadius(20.dp)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 12.dp, vertical = if (compact) 8.dp else 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CircularProgressIndicator(
@@ -484,7 +670,7 @@ private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?) {
         }
         airlineLogo?.let { logo ->
             Spacer(GlanceModifier.width(6.dp))
-            AirlineLogoBadge(logo)
+            AirlineLogoBadge(logo, compact)
         }
     }
 }
@@ -541,9 +727,12 @@ private fun TimeChunk(sched: String, actual: String?, delayMin: Int?, palette: W
     }
 }
 
-/** White rounded badge — airline logos are drawn for light backgrounds. */
+/**
+ * White rounded badge — airline logos are drawn for light backgrounds.
+ * Compact: no taller than the slim route pill beside it.
+ */
 @Composable
-private fun AirlineLogoBadge(logo: Bitmap) {
+private fun AirlineLogoBadge(logo: Bitmap, compact: Boolean) {
     Box(
         modifier = GlanceModifier
             .background(ColorProvider(androidx.compose.ui.graphics.Color.White))
@@ -553,7 +742,7 @@ private fun AirlineLogoBadge(logo: Bitmap) {
         Image(
             provider = ImageProvider(logo),
             contentDescription = "airline",
-            modifier = GlanceModifier.size(24.dp),
+            modifier = GlanceModifier.size(if (compact) 20.dp else 24.dp),
         )
     }
 }
@@ -561,10 +750,10 @@ private fun AirlineLogoBadge(logo: Bitmap) {
 /**
  * Expressive tonal pill spanning its slot: origin left, the plane positioned
  * along a dotted path at its real journey progress, time-to-arrival under it,
- * destination right.
+ * destination right. [compact] leaves out the city names under the codes.
  */
 @Composable
-private fun RoutePill(state: WidgetState) {
+private fun RoutePill(state: WidgetState, compact: Boolean) {
     if (state.originIata == null && state.destIata == null) return
     val context = LocalContext.current
     Row(
@@ -572,26 +761,28 @@ private fun RoutePill(state: WidgetState) {
             .fillMaxWidth()
             .background(GlanceTheme.colors.secondaryContainer)
             .cornerRadius(20.dp) // full pill: radius ≈ half the pill height
-            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .padding(horizontal = 12.dp, vertical = if (compact) 3.dp else 5.dp)
             .clickable(
                 androidx.glance.action.actionStartActivity<com.sam.airblock.ui.MainActivity>()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Endpoint(state.originIata, state.originFlag, state.originCity,
+        Endpoint(state.originIata, state.originFlag, state.originCity.takeUnless { compact },
             horizontal = Alignment.Start)
         Column(
             modifier = GlanceModifier.defaultWeight().padding(horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val tint = GlanceTheme.colors.primary.getColor(context).toArgb()
-            val pathBitmap = remember(state.routeProgress, tint) {
+            val pathBitmap = SharedBitmaps.get("route|${state.routeProgress}|$tint") {
                 routeProgressBitmap(context, tint, state.routeProgress)
             }
-            Image(
-                provider = ImageProvider(pathBitmap),
-                contentDescription = "route progress",
-                modifier = GlanceModifier.fillMaxWidth().height(14.dp),
-            )
+            pathBitmap?.let {
+                Image(
+                    provider = ImageProvider(it),
+                    contentDescription = "route progress",
+                    modifier = GlanceModifier.fillMaxWidth().height(14.dp),
+                )
+            }
             // Real times from AeroAPI: elapsed-since-departure / total
             // scheduled duration ("00:25/03:12"), with how much LONGER (+) or
             // SHORTER (−) the journey is running than scheduled beside it — this
@@ -635,7 +826,7 @@ private fun RoutePill(state: WidgetState) {
                 }
             }
         }
-        Endpoint(state.destIata, state.destFlag, state.destCity,
+        Endpoint(state.destIata, state.destFlag, state.destCity.takeUnless { compact },
             horizontal = Alignment.End)
     }
 }
@@ -898,13 +1089,7 @@ private fun EmptyMessage(message: String) {
  * Returns a bitmap trimmed to the text bounds; scales down to [maxWidthPx].
  */
 private fun expressiveText(text: String, color: Int, heightPx: Int, maxWidthPx: Int): Bitmap {
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        this.color = color
-        typeface = android.graphics.Typeface.create(
-            "sans-serif-black", android.graphics.Typeface.BOLD)
-        textSize = heightPx * 0.82f
-        letterSpacing = -0.02f // expressive headlines run tight
-    }
+    val paint = expressivePaint(color, heightPx)
     var w = paint.measureText(text)
     if (maxWidthPx > 0 && w > maxWidthPx) {
         paint.textSize *= maxWidthPx / w
@@ -916,6 +1101,16 @@ private fun expressiveText(text: String, color: Int, heightPx: Int, maxWidthPx: 
     Canvas(bmp).drawText(text, 0f, -fm.ascent, paint)
     return bmp
 }
+
+/** The paint behind [expressiveText] — also used to measure its height. */
+private fun expressivePaint(color: Int, heightPx: Int) =
+    Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        this.color = color
+        typeface = android.graphics.Typeface.create(
+            "sans-serif-black", android.graphics.Typeface.BOLD)
+        textSize = heightPx * 0.82f
+        letterSpacing = -0.02f // expressive headlines run tight
+    }
 
 /**
  * Elapsed-since-departure / total-scheduled-duration for the route pill
