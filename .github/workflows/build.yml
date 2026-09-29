@@ -35,8 +35,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # No setup-android step: the hosted runners ship the Android SDK
+      # (ANDROID_HOME, licenses accepted). android-actions/setup-android@v3
+      # started swapping in its own sdkmanager 16.0 whose license step exits 1,
+      # failing every build before Gradle ran (2026-09-29).
 
       # No committed Gradle wrapper needed — setup-gradle provides the exact version
       - name: Set up Gradle
