@@ -36,13 +36,20 @@ the screen off or another app open, when no refresh runs. On the 10-minute data-
 countdown never ends before the next refresh, so an aircraft still overhead isn't cleared between
 looks.
 
+Alerts only fire for aircraft within the **alert range** (5 / 10 / 25 km or any; default 25 km) and
+say *overhead* only when the aircraft is at least 30° up in the sky, *nearby* otherwise. Each shows
+when it went up; tap it to dismiss. An emergency squawk on an aircraft that is already alerted on
+sounds again rather than updating the old alert silently. Alerts are checked on the widget's
+refreshes, so they only fire while your home screen is on screen.
+
 ## Data sources
 - Live aircraft: [adsb.lol](https://adsb.lol) community ADS-B network (free, no key)
 - Photos: [Planespotters.net](https://www.planespotters.net) public API — © the photographers
 - Real flight times (optional): [FlightAware AeroAPI](https://www.flightaware.com/commercial/aeroapi/) —
   scheduled/actual arrival in place of the ETA estimate. Opt-in under **Tuning → Flight times**;
   the key is stored in the Android keystore (never in the repo or APK), and usage is capped to
-  stay inside the feeder's free $10/month allowance, auto-disabling when spent.
+  stay inside the feeder's free $10/month allowance, pausing itself when spent and
+  resuming when the allowance renews.
   Lookups are **paced**: the allowance still unspent is drip-fed over the time still left in the
   billing month (with a small burst so a run of new flights all resolve), so one busy afternoon
   can't eat the whole month and quiet days automatically raise the rate. The settings card shows

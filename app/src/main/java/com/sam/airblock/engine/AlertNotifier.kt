@@ -91,12 +91,16 @@ class AlertNotifier(private val context: Context) {
         val hex = ac.hex.uppercase()
         val state = NotifyStore.readState(context)
         val timeoutMs = AlertExpiry.timeoutMs(prefs.clearAfterMin, refreshMs)
+        // Beyond the user's alert range counts as gone: no new alert, and a
+        // showing one is left to clear on its timer
+        val inRange = prefs.alertRangeKm == NotifyStore.ANY_RANGE ||
+            distanceKm == null || distanceKm <= prefs.alertRangeKm
         // Seen again: an alert already up for this airframe stays up, its
         // clear countdown restarted. Ahead of every return below — those stop
         // a NEW alert, and must not let a live one lapse while its aircraft is
         // still here. Only an airframe alerted on recently can have one up, so
         // ordinary traffic skips the lookup.
-        if (timeoutMs > 0 && hex in state.recent) rearm(nm, hex, timeoutMs)
+        if (timeoutMs > 0 && inRange && hex in state.recent) rearm(nm, hex, timeoutMs)
 
         // The user's own entry for this aircraft, if any — it carries the note
         // shown on the alert, and its "last seen" stamp is what keeps a
@@ -108,7 +112,7 @@ class AlertNotifier(private val context: Context) {
             prefs.groups, prefs.includeCategories, prefs.excludeCategories,
             watch = watch != null,
         )
-        if (matched.isEmpty()) return
+        if (matched.isEmpty() || !inRange) return
 
         // One notification only, on the highest-priority matching channel.
         // Muted airframes stay silent for everything except an emergency squawk.
@@ -122,9 +126,20 @@ class AlertNotifier(private val context: Context) {
             System.currentTimeMillis() - (state.recent[hex] ?: 0L) < NotifyStore.COOLDOWN_MS
         ) return
 
+        // Alerts are only-alert-once, so posting over one still on screen
+        // updates it silently. Right for the same alert again; wrong when it
+        // changes — a 7700 on an aircraft already up as "Military" must sound.
+        // Clear an alert showing on another channel so this one goes out fresh.
+        if (nm.activeNotifications.any {
+                it.tag == hex && it.id == NOTIF_ID_ALERT &&
+                    it.notification.channelId != group.channelId
+            }) nm.cancel(hex, NOTIF_ID_ALERT)
+
         // Phase 1: post NOW with the disk-cached photo, if this airframe has one
+        val postedAt = System.currentTimeMillis()
         val cached = if (photos.isCached(ac.hex)) photos.photoFor(ac.hex) else null
-        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached, timeoutMs, watch)
+        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached, timeoutMs,
+            postedAt, watch)
         NotifyStore.recordNotified(context, hex, group.id)
         // Phase 2: first sighting of this airframe — fetch the photo off the
         // tick path and fill it into the notification that is already up.
@@ -134,7 +149,8 @@ class AlertNotifier(private val context: Context) {
             } ?: return@launch
             // Don't resurrect an alert the user has already swiped away
             if (nm.activeNotifications.none { it.tag == hex && it.id == NOTIF_ID_ALERT }) return@launch
-            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched, timeoutMs, watch)
+            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched, timeoutMs,
+                postedAt, watch)
         }
         if (SettingsStore.read(context).logEnabled) {
             EventLog.append(context, "ALERT — ${group.label}: ${ac.callsign ?: ac.r ?: hex}")
@@ -157,7 +173,8 @@ class AlertNotifier(private val context: Context) {
             distanceKm = 6.5, fixLat = 0.0, fixLon = 0.0, photo = photo,
             // Never seen again, so it clears on the user's timer like a real
             // alert whose aircraft has gone
-            timeoutMs = AlertExpiry.timeoutMs(NotifyStore.read(context).clearAfterMin, 0L))
+            timeoutMs = AlertExpiry.timeoutMs(NotifyStore.read(context).clearAfterMin, 0L),
+            whenMs = System.currentTimeMillis())
     }
 
     /**
@@ -191,6 +208,7 @@ class AlertNotifier(private val context: Context) {
         fixLon: Double,
         photo: PhotoRepo.CachedPhoto?,
         timeoutMs: Long, // system timeout, 0 for none (AlertExpiry.timeoutMs)
+        whenMs: Long, // when the alert first went up — the photo fill-in keeps it
         watch: WatchEntry? = null,
     ) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -235,12 +253,26 @@ class AlertNotifier(private val context: Context) {
             context, hex.hashCode(), muteIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Tapping the alert dismisses it (a notification with no tap action
+        // ignores taps altogether)
+        val dismiss = PendingIntent.getBroadcast(
+            context, hex.hashCode(),
+            Intent(context, MuteReceiver::class.java)
+                .setAction(MuteReceiver.ACTION_DISMISS)
+                .putExtra(MuteReceiver.EXTRA_HEX, hex),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
 
         val b = Notification.Builder(context, group.channelId)
             .setSmallIcon(AircraftIcons.iconFor(ac.t, ac.category))
-            .setContentTitle(group.title)
+            .setContentTitle(group.title(AlertGroups.isOverhead(distanceKm, ac.altitudeFt)))
             .setContentText(body)
             .setSubText(reason)
+            // "5 min ago" in the header: when it went over
+            .setWhen(whenMs)
+            .setShowWhen(true)
+            .setContentIntent(dismiss)
+            .setAutoCancel(true)
             // The photo arrives as a second post of the same notification —
             // update it in place, don't buzz the user twice for one aircraft
             .setOnlyAlertOnce(true)

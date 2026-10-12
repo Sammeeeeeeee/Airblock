@@ -169,4 +169,25 @@ class AlertGroupsTest {
         assertEquals("SW", Units.compass8(225.0))
         assertEquals("NW", Units.compass8(315.0))
     }
+
+    // ------------------------------------------------- overhead vs nearby
+
+    @Test fun overheadMeansHighInTheSky() {
+        // Airliner at cruise 15 km off: ~35° up — overhead
+        assertTrue(AlertGroups.isOverhead(15.0, 35_000))
+        // Helicopter 4 km off at 1,000 ft: ~4° up, on the rooftops — nearby
+        assertTrue(!AlertGroups.isOverhead(4.0, 1_000))
+        // The same helicopter almost on top of you
+        assertTrue(AlertGroups.isOverhead(0.4, 1_000))
+        // Unknown altitude: only right on top of you; unknown distance: never
+        assertTrue(AlertGroups.isOverhead(0.8, null))
+        assertTrue(!AlertGroups.isOverhead(3.0, null))
+        assertTrue(!AlertGroups.isOverhead(null, 35_000))
+    }
+
+    @Test fun titleSaysWhereItIs() {
+        assertEquals("Military aircraft overhead", AlertGroup.MILITARY.title(overhead = true))
+        assertEquals("Military aircraft nearby", AlertGroup.MILITARY.title(overhead = false))
+        assertEquals("Emergency squawk nearby", AlertGroup.EMERGENCY.title(overhead = false))
+    }
 }

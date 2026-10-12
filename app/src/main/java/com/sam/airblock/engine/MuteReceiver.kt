@@ -12,15 +12,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Handles the "Mute this aircraft" notification action: remembers the airframe
- * in [NotifyStore] (managed under Settings → Notifications) and dismisses the
- * notification that carried the button.
+ * Handles taps on an alert. The "Mute this aircraft" action remembers the
+ * airframe in [NotifyStore] (managed under Settings → Notifications) and
+ * dismisses the notification that carried the button; a tap on the alert
+ * itself just dismisses it.
  */
 class MuteReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION_MUTE) return
         val hex = intent.getStringExtra(EXTRA_HEX) ?: return
+        if (intent.action == ACTION_DISMISS) {
+            // setAutoCancel already removes it on most shades; this makes
+            // sure on the rest
+            context.getSystemService(NotificationManager::class.java)
+                .cancel(hex.uppercase(), AlertNotifier.NOTIF_ID_ALERT)
+            return
+        }
+        if (intent.action != ACTION_MUTE) return
         val label = intent.getStringExtra(EXTRA_LABEL) ?: hex
         val result = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
@@ -39,6 +47,7 @@ class MuteReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_MUTE = "com.sam.airblock.MUTE_AIRCRAFT"
+        const val ACTION_DISMISS = "com.sam.airblock.DISMISS_ALERT"
         const val EXTRA_HEX = "hex"
         const val EXTRA_LABEL = "label"
     }

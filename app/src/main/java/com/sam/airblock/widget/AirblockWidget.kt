@@ -251,7 +251,7 @@ private fun WidgetContent(
 private fun StatusBadge(state: WidgetState) {
     // When the aircraft is already on the glass and only the route is still
     // loading, its skeleton pill is indicator enough — two spinners is noise
-    val routeSkeletonVisible = state.refreshing &&
+    val routeSkeletonVisible = state.routePending &&
         state.status == WidgetState.Status.OK &&
         state.originIata == null && state.destIata == null
     val showSpinner = state.refreshing && !routeSkeletonVisible
@@ -260,12 +260,16 @@ private fun StatusBadge(state: WidgetState) {
     when {
         showSpinner -> { icon = 0; tint = GlanceTheme.colors.primary }
         state.pausedReason != null -> {
-            icon = R.drawable.ic_battery_saver; tint = GlanceTheme.colors.tertiary
+            // Battery saver gets its leaf; a network pause (offline, Data
+            // Saver, the user's own "Off") is a plain pause
+            icon = if (state.pausedForBattery) R.drawable.ic_battery_saver
+            else R.drawable.ic_pause
+            tint = GlanceTheme.colors.tertiary
         }
         state.errorCount > 0 -> {
             icon = R.drawable.ic_warning; tint = GlanceTheme.colors.error
         }
-        isStale(state) -> {
+        state.markedStale || state.isStaleAt(System.currentTimeMillis()) -> {
             icon = R.drawable.ic_clock; tint = GlanceTheme.colors.outline
         }
         else -> return
@@ -582,7 +586,7 @@ private fun cardFit(
     val gap = if (compact) 4f else 6f
     // Mirrors RouteRow / RoutePill / AirlineLogoBadge / ChipsRow paddings
     val hasRoute = state.originIata != null || state.destIata != null
-    val routeLoading = !hasRoute && state.refreshing
+    val routeLoading = !hasRoute && state.routePending
     val pill = when {
         hasRoute -> 2 * (if (compact) 3f else 5f) + maxOf(
             line(15f) + (if (compact) 0f else line(10f)), // codes (+ cities)
@@ -630,9 +634,10 @@ private fun cardFit(
 @Composable
 private fun RouteRow(state: WidgetState, airlineLogo: Bitmap?, compact: Boolean) {
     val hasRoute = state.originIata != null || state.destIata != null
-    // Until the route fetch settles, hold the space with a loading pill —
-    // confirmed-no-route (refresh done, still no airports) shows nothing
-    val routeLoading = !hasRoute && state.refreshing
+    // While a route lookup is in flight, hold the space with a loading pill.
+    // Not on every refresh: an aircraft with no known route would flash it
+    // (and re-flow the card) every 15 s
+    val routeLoading = !hasRoute && state.routePending
     if (!hasRoute && !routeLoading && airlineLogo == null) return
     Row(
         modifier = GlanceModifier.fillMaxWidth(),
@@ -1143,12 +1148,4 @@ private fun hhmm(ms: Long): String {
 private fun flightTimeDelta(state: WidgetState): Int? {
     val arr = state.arrDelayMin ?: return null
     return state.depDelayMin?.let { arr - it } ?: arr
-}
-
-/** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */
-private fun isStale(state: WidgetState): Boolean {
-    if (state.updatedAt <= 0) return false
-    val deadline = if (state.staleAfterMs > 0) state.staleAfterMs
-    else state.updatedAt + 2 * 60_000
-    return System.currentTimeMillis() > deadline
 }

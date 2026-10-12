@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
+import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -12,6 +13,8 @@ import androidx.work.WorkerParameters
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.SettingsStore
+import com.sam.airblock.data.WidgetStateStore
+import com.sam.airblock.widget.AirblockWidget
 import com.sam.airblock.widget.AirblockWidgetReceiver
 import java.util.concurrent.TimeUnit
 
@@ -59,7 +62,22 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
                 }
             }
         }
+        markStale(ctx)
         return Result.success()
+    }
+
+    /**
+     * The widget redraws only when its state changes, so with the engine
+     * stopped it would keep showing old data as if it were current. Flag data
+     * past its freshness deadline so the stale clock appears; the next real
+     * refresh writes a fresh state and clears the flag.
+     */
+    private suspend fun markStale(ctx: Context) {
+        val now = System.currentTimeMillis()
+        val (prev, next) = WidgetStateStore.update(ctx) { s ->
+            if (!s.markedStale && s.isStaleAt(now)) s.copy(markedStale = true) else s
+        }
+        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(ctx)
     }
 
     @Suppress("DEPRECATION") // getRunningServices still works for our OWN service

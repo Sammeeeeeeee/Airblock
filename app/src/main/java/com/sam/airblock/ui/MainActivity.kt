@@ -154,6 +154,8 @@ data class PermissionsState(
     val usage: Boolean = false,
     /** Battery set to "unrestricted" — optional, NOT part of allGranted. */
     val unrestricted: Boolean = false,
+    /** App notifications allowed in system settings — alerts need it. */
+    val notifications: Boolean = true,
 ) {
     val allGranted get() = fine && background && usage
 }
@@ -241,6 +243,8 @@ class MainActivity : ComponentActivity() {
             usage = Gates(this).hasUsageAccess(),
             unrestricted = getSystemService(android.os.PowerManager::class.java)
                 .isIgnoringBatteryOptimizations(packageName),
+            notifications = getSystemService(NotificationManager::class.java)
+                .areNotificationsEnabled(),
         )
         widgetPlaced = getSystemService(AppWidgetManager::class.java)
             .getAppWidgetIds(ComponentName(this, AirblockWidgetReceiver::class.java))
@@ -671,7 +675,7 @@ private fun SettingsScreen(
 
             // ---- Aircraft alert notifications -----------------------------
             SectionLabel("Notifications")
-            NotificationsSection()
+            NotificationsSection(notifAllowed = perms.notifications)
             Spacer(Modifier.height(24.dp))
 
             if (perms.allGranted) setupSection()
@@ -792,8 +796,12 @@ private fun FlightTimesCard() {
             result.fold(
                 onSuccess = { AeroStore.recordUsage(context, it, "Checked $hm") },
                 onFailure = {
-                    AeroStore.recordUsage(context, null,
-                        "Check failed — ${it.message ?: "error"}")
+                    if (it is AeroApi.HttpError && it.keyRejected) {
+                        AeroStore.rejectKey(context, it.code)
+                    } else {
+                        AeroStore.recordUsage(context, null,
+                            "Check failed — ${it.message ?: "error"}")
+                    }
                 },
             )
             checking = false
@@ -958,9 +966,20 @@ private fun FlightTimesCard() {
                         }
                     }
                 }
-                if (aero.exhausted()) {
+                if (aero.keyRejected) {
                     Text(
-                        "Free allowance used up. Paused until next month.",
+                        "FlightAware rejected this key. Replace it to turn flight times " +
+                            "back on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.error,
+                    )
+                } else if (aero.exhausted()) {
+                    // Paused by the quota, not by the user — AeroStore turns it
+                    // back on when the allowance renews
+                    val resumes = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
+                        .format(java.util.Date(AeroPace.monthEndMs(nowMs)))
+                    Text(
+                        "Free allowance used up. Turns back on by itself on $resumes.",
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.error,
                     )
@@ -1000,23 +1019,18 @@ private fun hm(ms: Long?): String = ms?.let {
  * piggybacks on the existing refresh ticks — zero extra network requests.
  */
 @Composable
-private fun NotificationsSection() {
+private fun NotificationsSection(notifAllowed: Boolean) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cs = MaterialTheme.colorScheme
     val prefs by NotifyStore.flow(context).collectAsState(initial = NotifyPrefs())
 
-    // Mirror of the system-level switch — the runtime permission can be
-    // revoked from system settings at any time
-    var notifAllowed by remember { mutableStateOf(true) }
-    fun refreshAllowed() {
-        notifAllowed = context.getSystemService(NotificationManager::class.java)
-            .areNotificationsEnabled()
-    }
-    LaunchedEffect(prefs.enabled) { refreshAllowed() }
+    // notifAllowed mirrors the system-level switch, re-read on every resume
+    // (MainActivity.refreshPerms) — so fixing it in system settings and coming
+    // back clears the warning, as does answering the permission dialog
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { refreshAllowed() }
+    ) { }
 
     fun setEnabled(on: Boolean) {
         scope.launch { NotifyStore.setEnabled(context, on) }
@@ -1124,15 +1138,35 @@ private fun NotificationsSection() {
     }
     Spacer(Modifier.height(GroupGap))
 
-    // ---- Auto-clear ----------------------------------------------------------
-    // Counted from the aircraft's LAST sighting, not from when the alert went
-    // up — see AlertExpiry for how it stays on time with no tick running
+    // ---- Range + auto-clear -------------------------------------------------
+    // Clearing counts from the aircraft's LAST sighting, not from when the
+    // alert went up — see AlertExpiry for how it stays on time with no tick
     Surface(
         shape = GroupMiddle,
         color = cs.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+            Column {
+                Text(
+                    "Alert range",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (prefs.enabled) cs.onSurface else cs.onSurfaceVariant,
+                )
+                Text(
+                    "Only alert for aircraft within this distance of you.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant,
+                )
+            }
+            ConnectedToggleRow(
+                options = listOf(5, 10, 25).map { it to "$it km" } +
+                    (NotifyStore.ANY_RANGE to "Any"),
+                selected = prefs.alertRangeKm,
+                onSelect = { scope.launch { NotifyStore.setAlertRange(context, it) } },
+                enabled = prefs.enabled,
+            )
+            Spacer(Modifier.height(4.dp))
             Column {
                 Text(
                     "Clear alerts",
@@ -1732,9 +1766,7 @@ private fun StatusCard(
         else -> "${ageSec / 60} min ago"
     }
     // Schedule-aware staleness — 9-min-old data is HEALTHY on the 10-min plan
-    val staleDeadline = if (state.staleAfterMs > 0) state.staleAfterMs
-    else state.updatedAt + 120_000
-    val isStaleNow = state.updatedAt > 0 && now > staleDeadline
+    val isStaleNow = state.isStaleAt(now)
 
     data class StatusUi(val icon: Int, val title: String, val detail: String,
         val container: Color, val content: Color)
@@ -1747,8 +1779,9 @@ private fun StatusCard(
             "${state.refreshStage ?: "Starting…"} Previous update: ${age()}.",
             cs.primaryContainer, cs.onPrimaryContainer)
         state.pausedReason != null -> StatusUi(
-            R.drawable.ic_battery_saver, "Paused — ${state.pausedReason}",
-            (if (state.pausedReason == "battery saver")
+            if (state.pausedForBattery) R.drawable.ic_battery_saver else R.drawable.ic_pause,
+            "Paused — ${state.pausedReason}",
+            (if (state.pausedForBattery)
                 "Refreshes resume automatically when battery saver turns off. "
             else
                 "Refreshes resume automatically when the network or its setting changes. ") +
