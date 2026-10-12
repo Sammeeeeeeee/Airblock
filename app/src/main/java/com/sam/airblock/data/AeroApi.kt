@@ -87,6 +87,14 @@ class AeroApi(
 ) {
     private fun key(): String? = SecureKeyStore.aeroKey(context)
 
+    /**
+     * AeroAPI answered with an error status. Unlike a network failure this was
+     * never billed, and 401/403 means the key itself is wrong.
+     */
+    class HttpError(val code: Int, what: String) : IOException("aero $what HTTP $code") {
+        val keyRejected: Boolean get() = code == 401 || code == 403
+    }
+
     /** Real arrival timing for a callsign, or null when unknown/unauthorised. */
     @Throws(IOException::class)
     fun times(ident: String): AeroTimes? {
@@ -97,7 +105,7 @@ class AeroApi(
             .build()
         client.newCall(req).execute().use { resp ->
             if (resp.code == 404) return null
-            if (!resp.isSuccessful) throw IOException("aero flights HTTP ${resp.code}")
+            if (!resp.isSuccessful) throw HttpError(resp.code, "flights")
             val body = resp.body?.string() ?: return null
             val flight = pick(Http.json.decodeFromString<AeroFlightsResponse>(body).flights)
                 ?: return null
@@ -136,7 +144,7 @@ class AeroApi(
             .header("x-apikey", key)
             .build()
         client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) throw IOException("aero usage HTTP ${resp.code}")
+            if (!resp.isSuccessful) throw HttpError(resp.code, "usage")
             val body = resp.body?.string() ?: return null
             return Http.json.decodeFromString<AeroUsageResponse>(body).totalCost
         }

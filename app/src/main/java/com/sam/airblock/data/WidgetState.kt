@@ -90,15 +90,41 @@ data class WidgetState(
      * Like [refreshStage], deliberately NOT part of renderKey.
      */
     val stages: List<Stage> = emptyList(),
-    val pausedReason: String? = null,  // e.g. "battery saver"
+    val pausedReason: String? = null,  // [PAUSE_BATTERY] or "off (mobile data)" etc.
     val errorCount: Int = 0,           // consecutive failed refreshes
     val lastError: String? = null,     // human-readable cause of the last failure
     /** Epoch ms after which this data counts as stale (schedule-aware). */
     val staleAfterMs: Long = 0L,
     /** Human label of the active refresh schedule, e.g. "wifi · 10 min". */
     val modeLabel: String? = null,
+    /**
+     * A route lookup is actually in flight for this flight — the only time the
+     * widget shows its "Looking up route…" pill. Tying the pill to [refreshing]
+     * instead flashed it on every tick for aircraft with no known route.
+     */
+    val routePending: Boolean = false,
+    /**
+     * Set by the keep-alive worker once this data has gone stale. The widget
+     * redraws only when its state changes, so with the engine stopped nothing
+     * else would ever draw the stale clock. Any fresh state clears it.
+     */
+    val markedStale: Boolean = false,
 ) {
     enum class Status { OK, NO_AIRCRAFT, NO_LOCATION, NO_DATA, ERROR }
+
+    /** Paused by battery saver (rather than by network rules). */
+    val pausedForBattery: Boolean get() = pausedReason == PAUSE_BATTERY
+
+    /** Schedule-aware: data on the 10-min plan isn't stale after 2 minutes. */
+    fun isStaleAt(nowMs: Long): Boolean {
+        if (updatedAt <= 0) return false
+        val deadline = if (staleAfterMs > 0) staleAfterMs else updatedAt + 2 * 60_000
+        return nowMs > deadline
+    }
+
+    companion object {
+        const val PAUSE_BATTERY = "battery saver"
+    }
 
     /** One step of a refresh, as shown in the status card's checklist. */
     @Serializable
@@ -129,7 +155,7 @@ data class WidgetState(
         schedDepLocal, schedArrLocal, actualDepLocal, actualArrLocal,
         actualDepEpochMs?.let { it / 60_000 },
         specialType, category, alertTag, alertCategory, registration, modeLabel,
-        refreshing, pausedReason, errorCount > 0,
+        refreshing, pausedReason, errorCount > 0, routePending, markedStale,
     ).joinToString("|")
 }
 

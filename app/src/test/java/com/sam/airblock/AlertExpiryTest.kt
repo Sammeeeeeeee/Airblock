@@ -38,6 +38,11 @@ class AlertExpiryTest {
     }
 
     @Test
+    fun `alerts default to aircraft within 25 km`() {
+        assertEquals(25, NotifyPrefs().alertRangeKm)
+    }
+
+    @Test
     fun `never means no timeout at all`() {
         assertEquals(0L, AlertExpiry.timeoutMs(AlertExpiry.NEVER, 15_000L))
     }

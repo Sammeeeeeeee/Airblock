@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
 import com.sam.airblock.data.AeroApi
+import com.sam.airblock.data.AeroPrefs
 import com.sam.airblock.data.AeroStore
 import com.sam.airblock.data.AeroTimes
 import com.sam.airblock.data.AirlineLogoRepo
@@ -58,6 +59,9 @@ class Ticker(private val context: Context) {
     // Last callsign we logged a pacing skip for, so the activity log gets one
     // line per flight instead of one per tick
     private var lastPacedCallsign: String? = null
+    // Last AeroAPI lookup that failed (callsign, when) — that flight waits
+    // AERO_RETRY_MS before it's tried again, instead of on every tick
+    private var aeroFailure: Pair<String, Long>? = null
 
     var consecutiveErrors = 0
         private set
@@ -257,6 +261,9 @@ class Ticker(private val context: Context) {
                 manufacturerLogoPath = mfrLogoPath,
                 updatedAt = System.currentTimeMillis(),
                 refreshing = refreshing,
+                // Only a flight we haven't looked up yet shows "Looking up
+                // route…" — a known no-route flight would flash it every tick
+                routePending = callsign != null && !routeCached,
                 refreshStage = if (refreshing) "Loading route, photo & logo…" else null,
                 stages = stageList(),
                 staleAfterMs = staleAfter,
@@ -332,12 +339,14 @@ class Ticker(private val context: Context) {
                                             ?: st.destFlag,
                                         routeProgress = g.progress ?: st.routeProgress,
                                         etaEpochMs = g.etaEpochMs ?: st.etaEpochMs,
+                                        routePending = false,
                                     )
                                 }
                                 setStage("route", WidgetState.Stage.DONE)
                                 (route?.airports?.size ?: 0) >= 2
                             } catch (e: IOException) {
                                 Log.w(TAG, "route lookup failed for $callsign: $e")
+                                updateAndRender { it.copy(routePending = false) }
                                 setStage("route", WidgetState.Stage.FAILED)
                                 false
                             }
@@ -390,7 +399,8 @@ class Ticker(private val context: Context) {
                     (groundKm?.let { " · %.1f km".format(it) } ?: ""))
 
             updateAndRender {
-                it.copy(refreshing = false, refreshStage = null, stages = stageList())
+                it.copy(refreshing = false, refreshStage = null, stages = stageList(),
+                    routePending = false)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -406,6 +416,7 @@ class Ticker(private val context: Context) {
             // Keep showing last good data, but surface the failure icon
             val (prev, next) = WidgetStateStore.update(context) {
                 it.copy(errorCount = consecutiveErrors, refreshing = false,
+                    routePending = false,
                     refreshStage = null, stages = stageList(), pausedReason = null,
                     lastError = e.message ?: e.javaClass.simpleName)
             }
@@ -437,9 +448,13 @@ class Ticker(private val context: Context) {
             return
         }
         var aero = AeroStore.read(context)
+        fun offLabel(a: AeroPrefs) = when {
+            a.keyRejected -> "Schedule — key rejected"
+            a.exhausted() -> "Schedule — quota used"
+            else -> "Schedule — off"
+        }
         if (!aero.canQuery()) {
-            setStage("schedule", WidgetState.Stage.DONE,
-                label = if (aero.exhausted()) "Schedule — quota used" else "Schedule — off")
+            setStage("schedule", WidgetState.Stage.DONE, label = offLabel(aero))
             return
         }
         setStage("schedule", WidgetState.Stage.RUNNING)
@@ -447,9 +462,13 @@ class Ticker(private val context: Context) {
             if (System.currentTimeMillis() - aero.lastCheckedMs > USAGE_REFRESH_MS) {
                 runCatching { aeroApi.usageCostUsd() }
                     .onSuccess { AeroStore.recordUsage(context, it, "Auto-checked") }
+                    .onFailure {
+                        if (it is AeroApi.HttpError && it.keyRejected)
+                            AeroStore.rejectKey(context, it.code)
+                    }
                 aero = AeroStore.read(context)
                 if (!aero.canQuery()) {
-                    setStage("schedule", WidgetState.Stage.DONE, label = "Schedule — quota used")
+                    setStage("schedule", WidgetState.Stage.DONE, label = offLabel(aero))
                     return
                 }
             }
@@ -457,6 +476,14 @@ class Ticker(private val context: Context) {
             val times: AeroTimes? = if (cachedHit) {
                 cachedAero?.second
             } else {
+                // A lookup that just failed waits before this flight is tried
+                // again — not every 15 s, each one counted against the month
+                val failedAt = aeroFailure?.takeIf { it.first == callsign }?.second
+                if (failedAt != null && System.currentTimeMillis() - failedAt < AERO_RETRY_MS) {
+                    setStage("schedule", WidgetState.Stage.DONE,
+                        label = "Schedule — retrying later")
+                    return
+                }
                 // Budget gate: counts the billable query up front and drips the
                 // allowance out over the month (see AeroPace). PACED means the
                 // quota is fine but this flight has to wait — the widget keeps
@@ -484,7 +511,17 @@ class Ticker(private val context: Context) {
                     }
                     AeroStore.Spend.OK -> Unit
                 }
-                aeroApi.times(callsign).also { cachedAero = callsign to it }
+                try {
+                    aeroApi.times(callsign).also { cachedAero = callsign to it }
+                } catch (e: IOException) {
+                    aeroFailure = callsign to System.currentTimeMillis()
+                    if (e is AeroApi.HttpError) {
+                        // An error response was never billed: give it back
+                        AeroStore.refund(context)
+                        if (e.keyRejected) AeroStore.rejectKey(context, e.code)
+                    }
+                    throw e
+                }
             }
             if (times != null) {
                 val depLocal = formatLocal(times.schedDepMs, times.originTimeZone)
@@ -635,5 +672,7 @@ class Ticker(private val context: Context) {
         private const val TAG = "Airblock"
         /** Re-poll the free /account/usage endpoint at most this often. */
         private const val USAGE_REFRESH_MS = 30L * 60 * 1000
+        /** Wait this long before retrying a flight whose AeroAPI lookup failed. */
+        private const val AERO_RETRY_MS = 10L * 60 * 1000
     }
 }

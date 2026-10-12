@@ -22,6 +22,7 @@ import com.sam.airblock.R
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.SettingsStore
+import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.widget.AirblockWidget
 import com.sam.airblock.widget.AirblockWidgetReceiver
@@ -171,7 +172,7 @@ class UpdateService : Service() {
                         "powerSave=${gates.powerSave()}) — idle")
                     when {
                         gates.powerSave() && gates.screenOn() -> {
-                            setPausedFlag("battery saver")
+                            setPausedFlag(WidgetState.PAUSE_BATTERY)
                             logPhase("powersave", "paused — battery saver")
                         }
                         !gates.screenOn() -> logPhase("screenoff", "paused — screen off")

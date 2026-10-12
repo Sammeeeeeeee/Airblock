@@ -37,6 +37,12 @@ data class NotifyPrefs(
      * [AlertExpiry.NEVER] to keep it until swiped (see [AlertExpiry]).
      */
     val clearAfterMin: Int = AlertExpiry.DEFAULT_MIN,
+    /**
+     * Only alert for aircraft within this many km (ground distance), or
+     * [NotifyStore.ANY_RANGE]. The nearest aircraft can be ~90 km away on the
+     * default search radius — far too far to look up and see.
+     */
+    val alertRangeKm: Int = NotifyStore.DEFAULT_RANGE_KM,
 )
 
 /** Per-category tri-state shown in the advanced picker. */
@@ -61,6 +67,11 @@ object NotifyStore {
     /** Re-notify the same airframe at most once per this window. */
     const val COOLDOWN_MS = 45L * 60 * 1000
 
+    /** [NotifyPrefs.alertRangeKm] value meaning "no limit". */
+    const val ANY_RANGE = 0
+
+    const val DEFAULT_RANGE_KM = 25
+
     /** Don't re-stamp a one-off watch's "last seen" more often than this. */
     private const val SEEN_WRITE_MS = 60L * 1000
 
@@ -71,6 +82,7 @@ object NotifyStore {
     private val MUTED = stringPreferencesKey("notify_muted")
     private val WATCH = stringPreferencesKey("notify_watch")
     private val CLEAR_MIN = intPreferencesKey("notify_clear_min")
+    private val RANGE_KM = intPreferencesKey("notify_range_km")
     private val STATE = stringPreferencesKey("notify_state")
 
     private fun decode(p: Preferences) = NotifyPrefs(
@@ -85,6 +97,7 @@ object NotifyStore {
             runCatching { Http.json.decodeFromString<List<WatchEntry>>(it) }.getOrNull()
         } ?: emptyList(),
         clearAfterMin = p[CLEAR_MIN] ?: AlertExpiry.DEFAULT_MIN,
+        alertRangeKm = p[RANGE_KM] ?: DEFAULT_RANGE_KM,
     )
 
     suspend fun read(context: Context): NotifyPrefs =
@@ -99,6 +112,10 @@ object NotifyStore {
 
     suspend fun setClearAfter(context: Context, minutes: Int) {
         context.airblockStore.edit { it[CLEAR_MIN] = minutes }
+    }
+
+    suspend fun setAlertRange(context: Context, km: Int) {
+        context.airblockStore.edit { it[RANGE_KM] = km }
     }
 
     suspend fun setGroup(context: Context, id: String, on: Boolean) {

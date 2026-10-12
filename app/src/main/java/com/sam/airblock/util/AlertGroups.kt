@@ -12,31 +12,38 @@ enum class AlertGroup(
     val id: String,
     val channelId: String,
     val label: String,
-    /** Notification title, e.g. "Military aircraft overhead". */
-    val title: String,
+    /** What the notification title names, e.g. "Military aircraft" — see [title]. */
+    val subject: String,
     /** One-line description under the settings toggle. */
     val desc: String,
     /** Included in the default set when alerts are first enabled. */
     val defaultOn: Boolean,
 ) {
-    EMERGENCY("emergency", "alert2_emergency", "Emergency squawk", "Emergency squawk nearby",
+    EMERGENCY("emergency", "alert2_emergency", "Emergency squawk", "Emergency squawk",
         "Squawk 7500 · 7600 · 7700", true),
-    WATCHLIST("watchlist", "alert2_watchlist", "Watched aircraft", "Watched aircraft overhead",
+    WATCHLIST("watchlist", "alert2_watchlist", "Watched aircraft", "Watched aircraft",
         "Specific aircraft", true),
-    GOV("gov", "alert2_gov", "Government & VIP", "Government aircraft overhead",
+    GOV("gov", "alert2_gov", "Government & VIP", "Government aircraft",
         "Governments, royals, famous people", true),
-    MILITARY("military", "alert2_military", "Military", "Military aircraft overhead",
+    MILITARY("military", "alert2_military", "Military", "Military aircraft",
         "Air forces and armed forces worldwide", true),
     SERVICES("services", "alert2_services", "Police, medical & coastguard",
-        "Emergency-services aircraft overhead",
+        "Emergency-services aircraft",
         "Police, air ambulance, coastguard, firefighting", true),
-    DRONES("drones", "alert2_drones", "Drones & UAV", "Drone overhead",
+    DRONES("drones", "alert2_drones", "Drones & UAV", "Drone",
         "UAVs and drones", true),
     HISTORIC("historic", "alert2_historic", "Historic & interesting",
-        "Interesting aircraft overhead",
+        "Interesting aircraft",
         "Vintage, distinctive and notable airframes", true),
-    OTHER("other", "alert2_other", "Other special", "Special aircraft overhead",
-        "Any other notable aircraft", false),
+    OTHER("other", "alert2_other", "Other special", "Special aircraft",
+        "Any other notable aircraft", false);
+
+    /**
+     * Notification title: "Military aircraft overhead" only when it really is
+     * up above you ([AlertGroups.isOverhead]), otherwise "… nearby" — the
+     * nearest aircraft can be tens of kilometres away.
+     */
+    fun title(overhead: Boolean): String = "$subject ${if (overhead) "overhead" else "nearby"}"
 }
 
 /**
@@ -113,6 +120,20 @@ data class WatchEntry(
  * silently dropped.
  */
 object AlertGroups {
+
+    /**
+     * How high in the sky an aircraft must look to be called "overhead":
+     * 30° up from the horizon. A helicopter 4 km off at 1,000 ft sits barely
+     * above the rooftops; an airliner 15 km off at 35,000 ft is well up.
+     */
+    const val OVERHEAD_ELEVATION_DEG = 30.0
+
+    /** Seen [groundKm] away at [altitudeFt]: is it overhead? Unknown altitude → within 1 km. */
+    fun isOverhead(groundKm: Double?, altitudeFt: Int?): Boolean {
+        if (groundKm == null) return false
+        val altKm = altitudeFt?.let { it * 0.0003048 } ?: return groundKm <= 1.0
+        return Math.toDegrees(kotlin.math.atan2(altKm, groundKm)) >= OVERHEAD_ELEVATION_DEG
+    }
 
     val defaultGroupIds: Set<String> =
         AlertGroup.entries.filter { it.defaultOn }.map { it.id }.toSet()
