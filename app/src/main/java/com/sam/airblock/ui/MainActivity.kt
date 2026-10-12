@@ -139,6 +139,7 @@ import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.engine.AlertNotifier
 import com.sam.airblock.engine.Gates
 import com.sam.airblock.engine.UpdateService
+import com.sam.airblock.util.AlertExpiry
 import com.sam.airblock.util.AlertGroup
 import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.WatchEntry
@@ -720,6 +721,7 @@ private fun <T> ConnectedToggleRow(
     options: List<Pair<T, String>>,
     selected: T,
     onSelect: (T) -> Unit,
+    enabled: Boolean = true,
 ) {
     ButtonGroup(
         horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
@@ -730,6 +732,7 @@ private fun <T> ConnectedToggleRow(
             ToggleButton(
                 checked = selected == value,
                 onCheckedChange = { onSelect(value) },
+                enabled = enabled,
                 interactionSource = interaction,
                 modifier = Modifier
                     .weight(1f)
@@ -1117,6 +1120,38 @@ private fun NotificationsSection() {
                     )
                 }
             }
+        }
+    }
+    Spacer(Modifier.height(GroupGap))
+
+    // ---- Auto-clear ----------------------------------------------------------
+    // Counted from the aircraft's LAST sighting, not from when the alert went
+    // up — see AlertExpiry for how it stays on time with no tick running
+    Surface(
+        shape = GroupMiddle,
+        color = cs.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+            Column {
+                Text(
+                    "Clear alerts",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (prefs.enabled) cs.onSurface else cs.onSurfaceVariant,
+                )
+                Text(
+                    "Remove an alert this long after its aircraft was last seen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant,
+                )
+            }
+            ConnectedToggleRow(
+                options = listOf(2, 5, 15).map { it to "$it min" } +
+                    (AlertExpiry.NEVER to "Never"),
+                selected = prefs.clearAfterMin,
+                onSelect = { scope.launch { NotifyStore.setClearAfter(context, it) } },
+                enabled = prefs.enabled,
+            )
         }
     }
     Spacer(Modifier.height(GroupGap))

@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
+import com.sam.airblock.util.AlertExpiry
 import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.WatchEntry
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,11 @@ data class NotifyPrefs(
     val muted: Map<String, String> = emptyMap(),
     /** Specific aircraft to always alert on (the Watched aircraft group). */
     val watch: List<WatchEntry> = emptyList(),
+    /**
+     * Minutes an alert stays up after its aircraft was last seen, or
+     * [AlertExpiry.NEVER] to keep it until swiped (see [AlertExpiry]).
+     */
+    val clearAfterMin: Int = AlertExpiry.DEFAULT_MIN,
 )
 
 /** Per-category tri-state shown in the advanced picker. */
@@ -63,6 +70,7 @@ object NotifyStore {
     private val CAT_EXCLUDE = stringSetPreferencesKey("notify_cat_exclude")
     private val MUTED = stringPreferencesKey("notify_muted")
     private val WATCH = stringPreferencesKey("notify_watch")
+    private val CLEAR_MIN = intPreferencesKey("notify_clear_min")
     private val STATE = stringPreferencesKey("notify_state")
 
     private fun decode(p: Preferences) = NotifyPrefs(
@@ -76,6 +84,7 @@ object NotifyStore {
         watch = p[WATCH]?.let {
             runCatching { Http.json.decodeFromString<List<WatchEntry>>(it) }.getOrNull()
         } ?: emptyList(),
+        clearAfterMin = p[CLEAR_MIN] ?: AlertExpiry.DEFAULT_MIN,
     )
 
     suspend fun read(context: Context): NotifyPrefs =
@@ -86,6 +95,10 @@ object NotifyStore {
 
     suspend fun setEnabled(context: Context, on: Boolean) {
         context.airblockStore.edit { it[ENABLED] = on }
+    }
+
+    suspend fun setClearAfter(context: Context, minutes: Int) {
+        context.airblockStore.edit { it[CLEAR_MIN] = minutes }
     }
 
     suspend fun setGroup(context: Context, id: String, on: Boolean) {

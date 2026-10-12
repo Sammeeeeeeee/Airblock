@@ -13,6 +13,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Icon
+import android.util.Log
 import com.sam.airblock.R
 import com.sam.airblock.data.Aircraft
 import com.sam.airblock.data.EventLog
@@ -22,6 +23,7 @@ import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.util.AircraftIcons
+import com.sam.airblock.util.AlertExpiry
 import com.sam.airblock.util.AlertGroup
 import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.AlertLabels
@@ -53,6 +55,11 @@ import java.io.File
  * and once it leaves, [NotifyStore.COOLDOWN_MS] must pass before it can alert
  * again. Emergency squawks are exempt from the cooldown (and from per-aircraft
  * mutes) — a 7700 overhead is safety-relevant.
+ *
+ * Self-clearing: each alert carries a system timeout that every tick still
+ * seeing its aircraft restarts ([rearm]), so it goes a set time after the
+ * aircraft was LAST seen — and on time even when no tick is running. See
+ * [AlertExpiry].
  */
 class AlertNotifier(private val context: Context) {
 
@@ -71,6 +78,7 @@ class AlertNotifier(private val context: Context) {
         fixLon: Double,
         prevClosestHex: String?,
         photos: PhotoRepo,
+        refreshMs: Long, // until the next tick: the soonest it can be seen again
     ) {
         // One-off watches that have outlived their window go first, so an
         // expired entry can't fire on this tick.
@@ -81,6 +89,15 @@ class AlertNotifier(private val context: Context) {
         if (!nm.areNotificationsEnabled()) return // permission revoked later
 
         val hex = ac.hex.uppercase()
+        val state = NotifyStore.readState(context)
+        val timeoutMs = AlertExpiry.timeoutMs(prefs.clearAfterMin, refreshMs)
+        // Seen again: an alert already up for this airframe stays up, its
+        // clear countdown restarted. Ahead of every return below — those stop
+        // a NEW alert, and must not let a live one lapse while its aircraft is
+        // still here. Only an airframe alerted on recently can have one up, so
+        // ordinary traffic skips the lookup.
+        if (timeoutMs > 0 && hex in state.recent) rearm(nm, hex, timeoutMs)
+
         // The user's own entry for this aircraft, if any — it carries the note
         // shown on the alert, and its "last seen" stamp is what keeps a
         // one-off watch alive while the aircraft is still around.
@@ -99,7 +116,6 @@ class AlertNotifier(private val context: Context) {
             if (hex in prefs.muted) matched.firstOrNull { it == AlertGroup.EMERGENCY } ?: return
             else matched.first()
 
-        val state = NotifyStore.readState(context)
         val stillClosest = prevClosestHex?.uppercase() == hex
         if (stillClosest && state.sessionHex == hex && group.id in state.sessionGroups) return
         if (group != AlertGroup.EMERGENCY &&
@@ -108,7 +124,7 @@ class AlertNotifier(private val context: Context) {
 
         // Phase 1: post NOW with the disk-cached photo, if this airframe has one
         val cached = if (photos.isCached(ac.hex)) photos.photoFor(ac.hex) else null
-        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached, watch)
+        post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, cached, timeoutMs, watch)
         NotifyStore.recordNotified(context, hex, group.id)
         // Phase 2: first sighting of this airframe — fetch the photo off the
         // tick path and fill it into the notification that is already up.
@@ -118,7 +134,7 @@ class AlertNotifier(private val context: Context) {
             } ?: return@launch
             // Don't resurrect an alert the user has already swiped away
             if (nm.activeNotifications.none { it.tag == hex && it.id == NOTIF_ID_ALERT }) return@launch
-            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched, watch)
+            post(group, ac, alert, typeName, distanceKm, fixLat, fixLon, fetched, timeoutMs, watch)
         }
         if (SettingsStore.read(context).logEnabled) {
             EventLog.append(context, "ALERT — ${group.label}: ${ac.callsign ?: ac.r ?: hex}")
@@ -138,7 +154,31 @@ class AlertNotifier(private val context: Context) {
             gs = 415.0, category = "A2", dbFlags = 1L, dst = 3.5,
         )
         post(AlertGroup.MILITARY, ac, alert = null, typeName = "Eurofighter Typhoon",
-            distanceKm = 6.5, fixLat = 0.0, fixLon = 0.0, photo = photo)
+            distanceKm = 6.5, fixLat = 0.0, fixLon = 0.0, photo = photo,
+            // Never seen again, so it clears on the user's timer like a real
+            // alert whose aircraft has gone
+            timeoutMs = AlertExpiry.timeoutMs(NotifyStore.read(context).clearAfterMin, 0L))
+    }
+
+    /**
+     * Restart a showing alert's clear countdown: re-post it exactly as it is,
+     * with a fresh [timeoutMs]. The copy Android hands back is complete (photo,
+     * mute action) precisely so an app can re-post it, and the alert carries
+     * setOnlyAlertOnce, so this is silent. At most once per
+     * [AlertExpiry.REARM_MS], judged by when the alert was last posted.
+     */
+    private fun rearm(nm: NotificationManager, hex: String, timeoutMs: Long) {
+        // Housekeeping: a failed re-post must never cost the tick a real alert
+        // (an emergency squawk on this same airframe, say)
+        runCatching {
+            val live = nm.activeNotifications
+                .firstOrNull { it.tag == hex && it.id == NOTIF_ID_ALERT } ?: return
+            if (!AlertExpiry.rearmDue(live.postTime, System.currentTimeMillis())) return
+            nm.notify(hex, NOTIF_ID_ALERT,
+                Notification.Builder.recoverBuilder(context, live.notification)
+                    .setTimeoutAfter(timeoutMs)
+                    .build())
+        }.onFailure { Log.w(TAG, "alert re-arm failed for $hex: $it") }
     }
 
     private fun post(
@@ -150,6 +190,7 @@ class AlertNotifier(private val context: Context) {
         fixLat: Double,
         fixLon: Double,
         photo: PhotoRepo.CachedPhoto?,
+        timeoutMs: Long, // system timeout, 0 for none (AlertExpiry.timeoutMs)
         watch: WatchEntry? = null,
     ) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -206,6 +247,9 @@ class AlertNotifier(private val context: Context) {
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(context, R.drawable.ic_mute),
                 "Mute this aircraft", mute).build())
+        // Clears itself once its aircraft has gone; each sighting pushes this
+        // back out (rearm)
+        if (timeoutMs > 0) b.setTimeoutAfter(timeoutMs)
         val bitmap = photo?.let { BitmapFactory.decodeFile(it.file.absolutePath) }
         if (bitmap != null) {
             b.setLargeIcon(bitmap)
@@ -281,6 +325,8 @@ class AlertNotifier(private val context: Context) {
     }.getOrDefault(src)
 
     companion object {
+        private const val TAG = "Airblock"
+
         /** Tagged per airframe hex; the FGS notification owns id 1. */
         const val NOTIF_ID_ALERT = 2
 
