@@ -286,6 +286,7 @@ class Ticker(private val context: Context) {
                     fixLat = fix.lat, fixLon = fix.lon,
                     prevClosestHex = prev.hex,
                     photos = photos,
+                    refreshMs = effIntervalMs,
                 )
             }.onFailure { Log.w(TAG, "alert evaluation failed: $it") }
 

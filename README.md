@@ -29,6 +29,13 @@ rides along as a pill drawn onto the alert's photo. Watchlist entries take a **n
 alert) and can be set to **track once**, which removes them 20 minutes after the aircraft was last
 seen — for a single flight you're waiting on.
 
+Alerts **clear themselves** once the aircraft has gone: about 5 minutes after it was last the
+nearest aircraft (or 2 / 15 min, or never — **Notifications → Clear alerts**). Each refresh that
+still sees it restarts the countdown, and Android does the clearing, so it happens on time even with
+the screen off or another app open, when no refresh runs. On the 10-minute data-saving plan the
+countdown never ends before the next refresh, so an aircraft still overhead isn't cleared between
+looks.
+
 ## Data sources
 - Live aircraft: [adsb.lol](https://adsb.lol) community ADS-B network (free, no key)
 - Photos: [Planespotters.net](https://www.planespotters.net) public API — © the photographers
