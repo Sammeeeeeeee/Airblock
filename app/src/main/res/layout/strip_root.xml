@@ -71,23 +71,26 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="120dp" />
 
-        <!-- The stats pill: Android's swipeable stack, clipped to exactly one
-             rounded page. Up/down swipes roll the pages through it (where the
-             launcher passes swipes on); taps do too. -->
+        <!-- The stats pill: a flipper clipped to the pill's round shape. A tap
+             rolls to the next page; it also rolls on by itself (8 s,
+             FlightStrip.PAGE_FLIP_MS). -->
         <FrameLayout
             android:id="@+id/strip_stats_frame"
             android:layout_width="200dp"
-            android:layout_height="30dp"
+            android:layout_height="26dp"
             android:layout_marginStart="78dp"
-            android:layout_marginTop="63dp"
+            android:layout_marginTop="49dp"
             android:clipToOutline="true"
             android:visibility="gone">
 
-            <StackView
+            <ViewFlipper
                 android:id="@+id/strip_stats"
-                android:layout_width="230dp"
-                android:layout_height="35dp"
-                android:loopViews="true" />
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:autoStart="true"
+                android:flipInterval="8000"
+                android:inAnimation="@anim/strip_face_in"
+                android:outAnimation="@anim/strip_page_out" />
         </FrameLayout>
     </FrameLayout>
 </FrameLayout>

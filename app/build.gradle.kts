@@ -32,8 +32,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 39
-        versionName = "7.1"
+        versionCode = 40
+        versionName = "7.2"
 
         // Seed only — the running key lives in EncryptedSharedPreferences. Empty
         // unless AERO_API_KEY is set in local.properties / the environment.

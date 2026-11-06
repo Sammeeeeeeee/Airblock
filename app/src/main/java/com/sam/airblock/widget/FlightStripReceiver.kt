@@ -58,6 +58,8 @@ class FlightStripReceiver : AppWidgetProvider() {
             }
             FlightStrip.ACTION_REFRESH -> inBackground {
                 WidgetStateStore.update(context) { it.copy(refreshing = true) }
+                // After the write: a redraw in between would clear the mark
+                FlightStrip.onRefreshTapped()
                 Widgets.updateAll(context)
                 if (!UpdateService.start(context, tickNow = true)) {
                     // FGS start denied — clear the spinner instead of leaving it stuck

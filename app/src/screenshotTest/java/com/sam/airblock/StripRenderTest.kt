@@ -10,14 +10,13 @@ import android.graphics.Canvas
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Adapter
-import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.RemoteViews
-import android.widget.StackView
+import android.widget.ViewFlipper
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.widget.FlightStrip
 import com.sam.airblock.widget.FlightStripReceiver
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -120,19 +119,37 @@ class StripRenderTest {
         save(pages(host).first(), "picker_preview")
     }
 
-    /** Data updates keep the card and the stats where they are; a new aircraft gets a fresh card. */
+    /**
+     * Data updates keep the card and the stats where they are — including
+     * right after a tap moved the pill on, which blanked the old StackView
+     * pill on a phone. A new aircraft gets a fresh card and the first page.
+     */
     @Test fun launcherKeepsTheWidgetAcrossUpdates() {
         val host = host(313f, 100f, FlightStrip.preview(ctx, ba(), 313f, listOf(100f), now))
         val card = host.findViewById<View>(R.id.strip_card)
-        val stack = host.findViewById<StackView>(R.id.strip_stats)
+        val flipper = host.findViewById<ViewFlipper>(R.id.strip_stats)
+        val pages = flipper.childCount
+        // A tap on the second page: the pill moves to the third
+        update(host, FlightStrip.preview(ctx, ba(), 313f, listOf(100f), now + 5_000, jump = 2))
+        layout(host, 313f, 100f)
+        assertEquals(2, flipper.displayedChild)
+        val third = flipper.getChildAt(2)
+        // Fresh data: same card, same pill, same page, page drawn and visible
         update(host, FlightStrip.preview(ctx, ba().copy(altitudeFt = 8400, distanceKm = 14.1),
             313f, listOf(100f), now + 15_000))
         layout(host, 313f, 100f)
         assertSame(card, host.findViewById<View>(R.id.strip_card))
-        assertSame(stack, host.findViewById<StackView>(R.id.strip_stats))
-        update(host, FlightStrip.preview(ctx, police(), 313f, listOf(100f), now + 30_000))
+        assertSame(flipper, host.findViewById<ViewFlipper>(R.id.strip_stats))
+        assertEquals(pages, flipper.childCount)
+        assertEquals(2, flipper.displayedChild)
+        assertSame(third, flipper.getChildAt(2))
+        assertEquals(View.VISIBLE, third.visibility)
+        assert(third.width > 0 && third.height > 0)
+        // A new aircraft: fresh card, back to the first page
+        update(host, FlightStrip.preview(ctx, police(), 313f, listOf(100f), now + 30_000, jump = 0))
         layout(host, 313f, 100f)
         assertNotSame(card, host.findViewById<View>(R.id.strip_card))
+        assertEquals(0, flipper.displayedChild)
     }
 
     // ---- helpers ----------------------------------------------------------------
@@ -176,37 +193,26 @@ class StripRenderTest {
         v.layout(0, 0, w, h)
     }
 
-    /**
-     * One render per stats page. Robolectric leaves a RemoteViews collection
-     * StackView unlaid-out, so its own adapter is re-set behind a plain
-     * wrapper — the same item views, laid out normally.
-     */
+    /** One render per stats page, each shown with its roll finished. */
     private fun pages(host: AppWidgetHostView): List<Bitmap> {
         host.findViewById<ViewGroup>(R.id.strip_card)?.let { card ->
             card.layoutAnimation = null
             (0 until card.childCount).forEach { card.getChildAt(it).clearAnimation() }
         }
-        val stack = host.findViewById<StackView>(R.id.strip_stats)
-        if (stack == null || stack.visibility != View.VISIBLE || stack.adapter == null) return listOf(draw(host))
-        val real: Adapter = stack.adapter
-        stack.adapter = object : BaseAdapter() {
-            override fun getCount() = real.count
-            override fun getItem(p: Int): Any? = real.getItem(p)
-            override fun getItemId(p: Int) = real.getItemId(p)
-            override fun getView(p: Int, c: View?, g: ViewGroup?): View = real.getView(p, null, g)
-        }
+        val flipper = host.findViewById<ViewFlipper>(R.id.strip_stats)
+        val frame = host.findViewById<View>(R.id.strip_stats_frame)
+        if (flipper == null || frame.visibility != View.VISIBLE || flipper.childCount == 0) return listOf(draw(host))
+        flipper.stopFlipping()
+        flipper.inAnimation = null
+        flipper.outAnimation = null
         val wDp = host.width / ctx.resources.displayMetrics.density
         val hDp = host.height / ctx.resources.displayMetrics.density
-        return (0 until real.count).map { i ->
-            stack.displayedChild = i
-            repeat(3) { idle(); layout(host, wDp, hDp) }
-            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
-            layout(host, wDp, hDp)
-            // On a device the frame's rounded outline clips the stack to the
-            // front page; software drawing ignores outlines, so apply that clip
-            // here: the widget without the pill, plus the pill through a
-            // rounded mask.
-            val frame = host.findViewById<View>(R.id.strip_stats_frame)
+        return (0 until flipper.childCount).map { i ->
+            flipper.displayedChild = i
+            repeat(2) { idle(); layout(host, wDp, hDp) }
+            // On a device the frame's rounded outline clips the pill; software
+            // drawing ignores outlines, so apply that clip here: the widget
+            // without the pill, plus the pill through a rounded mask.
             val full = draw(host)
             frame.visibility = View.INVISIBLE
             val base = draw(host)

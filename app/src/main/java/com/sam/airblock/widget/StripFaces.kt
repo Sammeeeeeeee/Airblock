@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  * Layout it feeds: the full photo on the left; beside it a card whose first
  * line is the callsign with the model's and the airline's logos, and whose
  * second line is the route ("LHR ∿✈ GLA · 34 min left"); and a stats pill
- * coming off the photo that swipes up/down through [pages].
+ * coming off the photo that rolls through [pages].
  */
 data class StripContent(
     /** Callsign, or the headline of an empty state ("Clear skies"). */
@@ -25,7 +25,7 @@ data class StripContent(
     val airlineLogo: String?,
     /** Second line, as options longest first: the renderer takes the first that fits. */
     val line2: List<List<Run>>,
-    /** The swipeable stats; empty for empty states. */
+    /** The stats pages; empty for empty states. */
     val pages: List<StatPage>,
     val photoPath: String?,
     /** What TalkBack reads for the card. */
@@ -138,7 +138,7 @@ object StripContents {
 
     // ---- stats pages ------------------------------------------------------
 
-    /** The stats pill, in swipe order. An emergency squawk leads. */
+    /** The stats pill, in page order. An emergency squawk leads. */
     fun pages(s: WidgetState, nowMs: Long): List<StatPage> = listOfNotNull(
         alertPage(s), livePage(s), lookPage(s), tripPage(s, nowMs), airframePage(s),
     )
@@ -305,10 +305,11 @@ object StripContents {
      * every 15 s is noise — it spins only when the refresh matters: no data
      * yet, stale data or after a failure.
      */
-    fun status(s: WidgetState, nowMs: Long): StripStatus {
+    fun status(s: WidgetState, nowMs: Long, tapped: Boolean = false): StripStatus {
         val stale = s.markedStale || s.isStaleAt(nowMs)
         return when {
-            s.refreshing && (s.status != WidgetState.Status.OK || stale || s.errorCount > 0) ->
+            // The engine's own refreshes stay quiet on good data; a tapped one shows
+            s.refreshing && (tapped || s.status != WidgetState.Status.OK || stale || s.errorCount > 0) ->
                 StripStatus.SPINNER
             s.pausedReason != null ->
                 if (s.pausedForBattery) StripStatus.PAUSED_BATTERY else StripStatus.PAUSED

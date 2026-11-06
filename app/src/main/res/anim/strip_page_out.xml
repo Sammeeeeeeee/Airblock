@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A stats page rolls up and out on the same spring that brings the next
+     one in (strip_face_in), so the two move as one. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <translate
+        android:duration="@integer/strip_roll_ms"
+        android:fromYDelta="0%"
+        android:interpolator="@interpolator/strip_spring_spatial"
+        android:toYDelta="-100%" />
+    <alpha
+        android:duration="160"
+        android:fromAlpha="1"
+        android:interpolator="@android:interpolator/linear"
+        android:toAlpha="0" />
+</set>

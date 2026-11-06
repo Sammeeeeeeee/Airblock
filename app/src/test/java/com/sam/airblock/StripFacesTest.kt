@@ -118,6 +118,13 @@ class StripFacesTest {
         assertEquals("On the ground | 297 mph | 15 km", words(ground))
     }
 
+    @Test fun `a tapped refresh spins even on good data, the engine's own ticks do not`() {
+        val refreshing = ba.copy(refreshing = true, updatedAt = now, staleAfterMs = now + 60_000)
+        assertEquals(StripStatus.NONE, StripContents.status(refreshing, now))
+        assertEquals(StripStatus.SPINNER, StripContents.status(refreshing, now, tapped = true))
+        assertEquals(StripStatus.NONE, StripContents.status(refreshing.copy(refreshing = false), now, tapped = true))
+    }
+
     @Test fun `empty states say what is going on in plain words`() {
         val quiet = StripContents.of(WidgetState(status = WidgetState.Status.NO_AIRCRAFT), now)
         assertEquals("Clear skies", quiet.title)

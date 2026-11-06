@@ -31,12 +31,14 @@ import kotlin.math.roundToInt
 /**
  * The Flight strip: the nearest aircraft as the WHOLE photo, a card beside it
  * (callsign with the model's and airline's logos, the route under it) and a
- * stats pill coming off the photo that swipes up/down through more stats.
- * Only those shapes cover the wallpaper; the rest of the widget is see-through.
+ * stats pill coming off the photo that rolls through more stats, on a tap and
+ * on its own. Only those shapes cover the wallpaper; the rest is see-through.
  *
- * Plain RemoteViews rather than Glance: the stats pill is Android's StackView
- * (the one widget view that swipes) and the card's roll-in is a layout
- * animation — both need hand-written layouts.
+ * Taps: the photo opens Airblock, the card refreshes (a spinner shows until
+ * it is done), the pill rolls to its next page.
+ *
+ * Plain RemoteViews rather than Glance: the pill is a ViewFlipper and the
+ * card's roll-in a layout animation, both in hand-written layouts.
  */
 object FlightStrip {
 
@@ -50,6 +52,16 @@ object FlightStrip {
     private val lastSent = HashMap<Int, String>()
     /** A tapped stats page to move on from, applied once by the next frame. */
     private val pageJump = HashMap<Int, Int>()
+    /** The aircraft each widget last showed: a new one starts on the first page. */
+    private val lastHex = HashMap<Int, String?>()
+    /**
+     * The card was tapped and that refresh is still running. Only then does a
+     * spinner show on good data: the engine also refreshes every few seconds
+     * by itself, and those should not blink.
+     */
+    @Volatile private var refreshTapped = false
+
+    fun onRefreshTapped() { refreshTapped = true }
 
     /** Redraw every placed strip from the stored state. */
     suspend fun updateAll(context: Context) = withContext(Dispatchers.Default) {
@@ -80,6 +92,7 @@ object FlightStrip {
     fun forget(ids: IntArray) {
         synchronized(lastSent) { ids.forEach { lastSent.remove(it) } }
         synchronized(pageJump) { ids.forEach { pageJump.remove(it) } }
+        synchronized(lastHex) { ids.forEach { lastHex.remove(it) } }
     }
 
     /**
@@ -92,6 +105,7 @@ object FlightStrip {
         widthDp: Float,
         heightsDp: List<Float>,
         nowMs: Long = System.currentTimeMillis(),
+        jump: Int? = null,
     ): RemoteViews = render(context, Frame(
         id = AppWidgetManager.INVALID_APPWIDGET_ID,
         state = state,
@@ -100,7 +114,7 @@ object FlightStrip {
         widthDp = widthDp,
         fontScale = context.resources.configuration.fontScale.coerceIn(0.9f, 1.15f),
         status = StripContents.status(state, nowMs),
-        jump = null,
+        jump = jump,
     ))
 
     /**
@@ -144,8 +158,13 @@ object FlightStrip {
         try {
             val awm = AppWidgetManager.getInstance(context)
             val now = System.currentTimeMillis()
-            val jump = synchronized(pageJump) { pageJump.remove(id) }
-            val frame = Frame.of(context, id, state, now, awm.getAppWidgetOptions(id), jump)
+            if (!state.refreshing) refreshTapped = false
+            val newAircraft = synchronized(lastHex) {
+                val had = lastHex.containsKey(id)
+                (lastHex.put(id, state.hex) != state.hex) && had && state.hex != null
+            }
+            val jump = synchronized(pageJump) { pageJump.remove(id) } ?: if (newAircraft) 0 else null
+            val frame = Frame.of(context, id, state, now, awm.getAppWidgetOptions(id), jump, refreshTapped)
             val key = frame.key()
             if (!force && jump == null && synchronized(lastSent) { lastSent[id] } == key) return
             awm.updateAppWidget(id, render(context, frame))
@@ -174,13 +193,16 @@ object FlightStrip {
         ).joinToString("|")
 
         companion object {
-            fun of(context: Context, id: Int, s: WidgetState, now: Long, options: Bundle?, jump: Int?): Frame {
+            fun of(
+                context: Context, id: Int, s: WidgetState, now: Long, options: Bundle?, jump: Int?,
+                tapped: Boolean,
+            ): Frame {
                 val (widthDp, heights) = reportedSize(options)
                 return Frame(
                     id = id, state = s, content = StripContents.of(s, now),
                     tiers = StripTier.forHeights(heights), widthDp = widthDp,
                     fontScale = context.resources.configuration.fontScale.coerceIn(0.9f, 1.15f),
-                    status = StripContents.status(s, now), jump = jump,
+                    status = StripContents.status(s, now, tapped), jump = jump,
                 )
             }
 
@@ -508,38 +530,30 @@ object FlightStrip {
         (DOTS_GAP_DP * d).roundToInt(), (DOTS_END_DP * d).roundToInt())
 
     /**
-     * The stats pill: a StackView whose front page sits in the photo's
-     * cut-out and across the join into the card. StackView puts each page in
-     * a frame padded by FRAME_PAD, sizes the frames to at most 90% of itself
-     * and fans the pages behind up and to the right. The clip frame is
-     * exactly the front page, rounded, and the pages are plain rectangles
-     * filling it, so nothing behind shows — a swipe rolls the pages through
-     * the pill. Page dots say it pages. All in whole pixels ([left]…[h]).
+     * The stats pill: a ViewFlipper inside a frame clipped to the pill's
+     * round shape. A tap rolls to the next page and the pill rolls on by
+     * itself every [PAGE_FLIP_MS]; each page rolls up on the M3 Expressive
+     * spring. Pages are stable views, so a data update refreshes them in
+     * place and leaves the flipper on the page it is showing. All in whole
+     * pixels ([left]…[h]).
      */
     private fun stats(
         context: Context, rv: RemoteViews, f: Frame, layout: StatsLayout, colors: Palette,
         left: Int, top: Int, w: Int, h: Int,
     ) {
         val d = context.resources.displayMetrics.density
-        // StackView: mFramePadding = (int) Math.ceil(density * FRAME_PADDING)
-        val pad = ceil(FRAME_PAD_DP * d).toInt()
-        val stackW = ceil((w + 2 * pad) / STACK_FILL).toInt() + 1
-        val stackH = ceil((h + 2 * pad) / STACK_FILL).toInt() + 1
         rv.setViewVisibility(R.id.strip_stats_frame, View.VISIBLE)
         rv.sizePx(R.id.strip_stats_frame, w, h)
         rv.marginPx(R.id.strip_stats_frame, RemoteViews.MARGIN_START, left)
         rv.marginPx(R.id.strip_stats_frame, RemoteViews.MARGIN_TOP, top)
         rv.setViewOutlinePreferredRadius(R.id.strip_stats_frame, h / 2f, TypedValue.COMPLEX_UNIT_PX)
-        // The front page sits at the stack's bottom-left, inside its frame padding
-        rv.sizePx(R.id.strip_stats, stackW, stackH)
-        rv.marginPx(R.id.strip_stats, RemoteViews.MARGIN_START, -pad)
-        rv.marginPx(R.id.strip_stats, RemoteViews.MARGIN_TOP, -(stackH - pad - h))
+        // One page has nothing to roll to: a flip would only replay it
+        rv.setInt(R.id.strip_stats, "setFlipInterval",
+            if (layout.pages.size > 1) PAGE_FLIP_MS else Int.MAX_VALUE)
         // Text at the pill's left; any width the card added goes before the dots
         val pp = pagePad(d)
         val textSlot = w - pp.start - pp.gap - pp.end - layout.dots.first().width
-        val items = RemoteViews.RemoteCollectionItems.Builder()
-            .setHasStableIds(true)
-            .setViewTypeCount(1)
+        rv.removeAllViews(R.id.strip_stats)
         layout.pages.forEachIndexed { i, p ->
             val (bg, fg) = colors.page(p.kind)
             val item = RemoteViews(context.packageName, R.layout.strip_stat_page)
@@ -547,8 +561,7 @@ object FlightStrip {
             val text = layout.bitmaps[i]
             item.setImageViewBitmap(R.id.strip_page_text, text)
             item.tint(R.id.strip_page_text, "setImageTintList", fg)
-            // The page is exactly w×h: a collection item's root ignores a set
-            // size, so the text's slot and margins add up to it
+            // The page is exactly w×h: the text's slot and margins add up to it
             item.setViewLayoutWidth(R.id.strip_page_text, textSlot.toFloat(), TypedValue.COMPLEX_UNIT_PX)
             item.marginPx(R.id.strip_page_text, RemoteViews.MARGIN_START, pp.start)
             item.marginPx(R.id.strip_page_text, RemoteViews.MARGIN_TOP, (h - text.height) / 2)
@@ -557,13 +570,11 @@ object FlightStrip {
             item.marginPx(R.id.strip_page_dots, RemoteViews.MARGIN_END, pp.end)
             item.setImageViewBitmap(R.id.strip_page_dots, layout.dots[i])
             item.tint(R.id.strip_page_dots, "setImageTintList", fg)
-            item.setContentDescription(R.id.strip_page, p.description + ". Swipe or tap for more")
-            item.setOnClickFillInIntent(R.id.strip_page, Intent().putExtra(EXTRA_PAGE, i))
-            items.addItem(p.kind.ordinal.toLong(), item)
+            item.setContentDescription(R.id.strip_page, p.description + ". Tap for more")
+            item.setOnClickPendingIntent(R.id.strip_page, pageIntent(context, f.id, i))
+            rv.addStableView(R.id.strip_stats, item, p.kind.ordinal)
         }
-        rv.setRemoteAdapter(R.id.strip_stats, items.build())
-        rv.setPendingIntentTemplate(R.id.strip_stats, pageTemplate(context, f.id))
-        // Only right after a tap: a later update must not undo a swipe
+        // Only after a tap or for a new aircraft: an update must not move the pill
         f.jump?.let { rv.setDisplayedChild(R.id.strip_stats, it.mod(layout.pages.size)) }
     }
 
@@ -579,14 +590,15 @@ object FlightStrip {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    /** Collection items fill in the page index, so this one must be mutable. */
-    private fun pageTemplate(context: Context, id: Int): PendingIntent {
+    /** Page [page] of the pill was tapped. Distinct data per page, so the intents never merge. */
+    private fun pageIntent(context: Context, id: Int, page: Int): PendingIntent {
         val intent = Intent(context, FlightStripReceiver::class.java)
             .setAction(ACTION_PAGE)
-            .setData(Uri.parse("airblock-strip://$ACTION_PAGE/$id"))
+            .setData(Uri.parse("airblock-strip://$ACTION_PAGE/$id/$page"))
             .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+            .putExtra(EXTRA_PAGE, page)
         return PendingIntent.getBroadcast(context, 0, intent,
-            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     private fun openApp(context: Context): PendingIntent = PendingIntent.getActivity(
@@ -618,10 +630,8 @@ object FlightStrip {
     private const val PAGE_PAD_START_DP = 13f
     private const val DOTS_GAP_DP = 8f
     private const val DOTS_END_DP = 11f
-    /** StackView sizes its pages to this share of itself (its perspective shift). */
-    private const val STACK_FILL = 0.9f
-    /** StackView's padding around each page (its FRAME_PADDING). */
-    private const val FRAME_PAD_DP = 4f
+    /** The pill rolls to its next page this often (strip_root.xml repeats it). */
+    private const val PAGE_FLIP_MS = 8000
     /** Line 1 sizes, tried in turn until callsign, mark and tile all fit. */
     private val FIT_STEPS = floatArrayOf(1f, 0.92f, 0.85f, 0.78f, 0.72f)
 

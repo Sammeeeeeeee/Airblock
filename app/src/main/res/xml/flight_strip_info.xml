@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Two cells tall gives the full strip: the photo, the card and the stats
      pill. One cell gives the compact row (photo + card). Only those shapes
-     cover the wallpaper; the rest of the widget is see-through.
-     autoAdvanceViewId: launchers that support it turn the stats pages over
-     on their own; everywhere they swipe up/down or turn on a tap. -->
+     cover the wallpaper; the rest of the widget is see-through. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:autoAdvanceViewId="@id/strip_stats"
     android:description="@string/strip_description"
     android:initialLayout="@layout/strip_loading"
     android:minWidth="250dp"

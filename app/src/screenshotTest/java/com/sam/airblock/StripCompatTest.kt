@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Parcel
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.StackView
+import android.widget.ViewFlipper
 import androidx.test.core.app.ApplicationProvider
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.widget.FlightStrip
@@ -75,14 +75,14 @@ class StripCompatTest {
             val v = rv.apply(ctx, FrameLayout(ctx))
             assertNotNull(v.findViewById<View>(R.id.strip_photo))
             assertNotNull(v.findViewById<View>(R.id.strip_card))
-            assertNotNull(v.findViewById<StackView>(R.id.strip_stats))
+            assertNotNull(v.findViewById<ViewFlipper>(R.id.strip_stats))
         }
-        // The full tier on its own, so its StackView calls are applied too
+        // The full tier on its own, so its flipper calls are applied too
         val full = FlightStrip.preview(ctx, ok, 313f, listOf(100f), now)
         val sized = full.javaClass.getDeclaredMethod("getRemoteViewsToApply", Context::class.java,
             android.util.SizeF::class.java).apply { isAccessible = true }
             .invoke(full, ctx, android.util.SizeF(313f, 100f)) as android.widget.RemoteViews
         val v = sized.apply(ctx, FrameLayout(ctx))
-        assertEquals(View.VISIBLE, v.findViewById<StackView>(R.id.strip_stats).visibility)
+        assertEquals(View.VISIBLE, v.findViewById<ViewFlipper>(R.id.strip_stats).visibility)
     }
 }

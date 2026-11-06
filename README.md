@@ -27,10 +27,12 @@ its own shapes cover the wallpaper: the rest of the widget is see-through.
 - **The route under it**: `LHR ∿✈── GLA · 34 min left`, the wavy line showing how far along
   the flight is.
 - **A stats pill coming off the photo**, docked along the band's bottom and notched into the
-  photo, so it costs no extra height. Swipe it up or down, or tap it, for the next page: height
-  (with a climb/descent arrow), speed and distance · where to look (a compass needle, "NW 34° up")
-  · landing time and delay (with flight times on) · registration, type and Mach. An emergency
-  squawk goes first. Launchers that turn widget stacks over by themselves also turn these pages.
+  photo, so it costs no extra height. Tap it for the next page, or let it roll on by itself every
+  8 s: height (with a climb/descent arrow), speed and distance · where to look (a compass needle,
+  "NW 34° up") · landing time and delay (with flight times on) · registration, type and Mach. An
+  emergency squawk goes first.
+- **Taps:** the photo opens Airblock; the card refreshes, with a spinner on the photo's corner
+  until it is done; the pill turns the page.
 - **The airline's colours.** The strip takes its tones from the airline's logo (Material's
   colour-from-content, set in OkLCH so every livery keeps the same contrast in light and dark).
   No logo, or one with no real colour: the wallpaper's colours. Military aircraft and emergencies
@@ -42,10 +44,9 @@ Text is Google Sans Flex, the Material 3 Expressive typeface (SIL Open Font Lice
 bundled; licence in `app/src/main/assets/licenses`). Launchers refuse app fonts in widget text,
 so the strip draws its text as images the launcher tints: it still follows light and dark.
 
-**On Niagara:** place it under the clock, 4 wide. Left/right swipes belong to Niagara's widget
-stacks, so the stats page up/down. The strip keeps clear of the A–Z bar on the right, where
-Niagara takes taps. If your Niagara version does not pass up/down swipes to widgets, tap the
-stats instead.
+**On Niagara:** place it under the clock, 4 wide. The strip keeps clear of the A–Z bar on the
+right, where Niagara takes taps, and nothing in it needs a swipe, so it never fights Niagara's own
+gestures.
 
 ## Alerts
 Optional heads-up notifications when something worth looking up at goes over: emergency squawks,
