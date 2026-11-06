@@ -180,6 +180,8 @@ class MainActivity : ComponentActivity() {
         lifecycle.coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             if (SettingsStore.read(this@MainActivity).logEnabled)
                 EventLog.append(this@MainActivity, "app opened")
+            // So the widget picker shows the Flight strip as it really looks
+            com.sam.airblock.widget.FlightStrip.publishPickerPreview(this@MainActivity)
         }
         setContent {
             val dark = isSystemInDarkTheme()
@@ -246,9 +248,7 @@ class MainActivity : ComponentActivity() {
             notifications = getSystemService(NotificationManager::class.java)
                 .areNotificationsEnabled(),
         )
-        widgetPlaced = getSystemService(AppWidgetManager::class.java)
-            .getAppWidgetIds(ComponentName(this, AirblockWidgetReceiver::class.java))
-            .isNotEmpty()
+        widgetPlaced = com.sam.airblock.widget.Widgets.anyPlaced(this)
     }
 }
 

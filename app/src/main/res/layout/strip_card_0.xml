@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The card beside the photo: callsign with the model's and airline's
+     logos, the route under it. A tap refreshes (with a ripple, and a spinner
+     on the photo until it is done). strip_card_0…3 are identical on purpose:
+     switching between them makes the launcher build a fresh card, which
+     plays the roll-in for a new aircraft (see FlightStrip.renderTier). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/strip_card"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/strip_card"
+    android:clipToOutline="true"
+    android:foreground="?android:attr/selectableItemBackground"
+    android:layoutAnimation="@anim/strip_card_enter"
+    android:orientation="vertical"
+    android:paddingStart="13dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="13dp"
+    android:paddingBottom="8dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/strip_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/strip_mark"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="7dp"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/strip_tile"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:importantForAccessibility="no" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/strip_l2_a"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/strip_l2_b"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/strip_l2_c"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:importantForAccessibility="no" />
+
+        <ImageView
+            android:id="@+id/strip_l2_d"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:importantForAccessibility="no" />
+    </LinearLayout>
+</LinearLayout>

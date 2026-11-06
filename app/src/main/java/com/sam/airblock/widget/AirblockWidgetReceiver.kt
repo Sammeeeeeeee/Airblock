@@ -19,7 +19,8 @@ class AirblockWidgetReceiver : GlanceAppWidgetReceiver() {
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
         // The service notices the last widget is gone and stops itself;
-        // also drop the keep-alive job so nothing runs at all.
-        KeepAliveWorker.unschedule(context)
+        // also drop the keep-alive job so nothing runs at all — unless a
+        // Flight strip is still placed and needs it
+        if (!Widgets.anyPlaced(context)) KeepAliveWorker.unschedule(context)
     }
 }

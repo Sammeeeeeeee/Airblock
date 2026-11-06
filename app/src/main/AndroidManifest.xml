@@ -56,6 +56,20 @@
                 android:resource="@xml/airblock_widget_info" />
         </receiver>
 
+        <!-- The Flight strip: plain RemoteViews, so its carousel can run in
+             the launcher. Its taps come back here as explicit broadcasts. -->
+        <receiver
+            android:name=".widget.FlightStripReceiver"
+            android:exported="true"
+            android:label="@string/strip_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/flight_strip_info" />
+        </receiver>
+
         <service
             android:name=".engine.UpdateService"
             android:exported="false"

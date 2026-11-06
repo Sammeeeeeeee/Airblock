@@ -25,6 +25,12 @@ data class WidgetState(
     val speedMph: Int? = null,
     val mach: Double? = null,
     val distanceKm: Double? = null,
+    /** Compass bearing from you to the aircraft, 0..360° from true north. */
+    val bearingDeg: Double? = null,
+    /** How high the aircraft looks from where you are: degrees above the horizon. */
+    val elevationDeg: Double? = null,
+    /** Climb (+) or descent (−) rate in ft/min. */
+    val verticalRateFpm: Int? = null,
     /** 0..1 fraction of the current leg already flown, when route is known. */
     val routeProgress: Float? = null,
     /** Estimated arrival at destination (epoch ms), from distance/speed. */
@@ -148,6 +154,10 @@ data class WidgetState(
         status, callsign, typeName, altitudeFt, onGround, speedMph,
         mach?.let { "%.2f".format(it) },
         distanceKm?.let { "%.1f".format(it) }, squawkAlert,
+        // Coarse on purpose: the Flight strip shows "NW · 34° up" and a climb
+        // arrow, so redraw when those words change, not on every metre
+        bearingDeg?.let { com.sam.airblock.util.Units.compass8(it) },
+        elevationDeg?.toInt(), com.sam.airblock.util.Sky.trend(verticalRateFpm),
         originIata, destIata, photoPath, airlineLogoPath, airlineName,
         manufacturerLogoPath, modelLogoPath,
         routeProgress?.let { (it * 20).toInt() }, etaEpochMs?.let { it / 60_000 },

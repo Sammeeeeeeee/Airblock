@@ -5,9 +5,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.appwidget.AppWidgetManager
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -17,15 +15,13 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.IBinder
 import android.util.Log
-import androidx.glance.appwidget.updateAll
 import com.sam.airblock.R
 import com.sam.airblock.data.EventLog
 import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetState
 import com.sam.airblock.data.WidgetStateStore
-import com.sam.airblock.widget.AirblockWidget
-import com.sam.airblock.widget.AirblockWidgetReceiver
+import com.sam.airblock.widget.Widgets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -268,13 +264,10 @@ class UpdateService : Service() {
     /** Surface/clear the "paused" status icon without touching the rest of the state. */
     private suspend fun setPausedFlag(reason: String?) {
         val (prev, next) = WidgetStateStore.update(this) { it.copy(pausedReason = reason) }
-        if (prev.pausedReason != next.pausedReason) AirblockWidget().updateAll(this)
+        if (prev.pausedReason != next.pausedReason) Widgets.updateAll(this)
     }
 
-    private fun widgetPlaced(): Boolean =
-        AppWidgetManager.getInstance(this)
-            .getAppWidgetIds(ComponentName(this, AirblockWidgetReceiver::class.java))
-            .isNotEmpty()
+    private fun widgetPlaced(): Boolean = Widgets.anyPlaced(this)
 
     // ---------------------------------------------------------- notification
 
@@ -314,8 +307,9 @@ class UpdateService : Service() {
             EventLog.append(context, "FORCE RESTART — engine + widget sessions rebuilt")
             context.stopService(Intent(context, UpdateService::class.java))
             val wm = androidx.work.WorkManager.getInstance(context)
-            AppWidgetManager.getInstance(context)
-                .getAppWidgetIds(ComponentName(context, AirblockWidgetReceiver::class.java))
+            // Only the card renders through Glance sessions; the Flight strip
+            // is plain RemoteViews and has no session to wedge
+            Widgets.cardIds(context)
                 .forEach { id ->
                     // Glance's session worker runs under this unique name; a
                     // permanently-wedged session is exactly what freezes the
@@ -327,9 +321,9 @@ class UpdateService : Service() {
             }
             // Cached render bitmaps (callsign, photo…) are drawn for one
             // display density — rebuild them for the current screen too
-            AirblockWidget.resetRenderCaches()
+            Widgets.resetRenderCaches()
             delay(400)
-            AirblockWidget().updateAll(context) // recreates fresh sessions
+            Widgets.updateAll(context) // recreates fresh sessions
             KeepAliveWorker.schedule(context)
             start(context, tickNow = true)
         }

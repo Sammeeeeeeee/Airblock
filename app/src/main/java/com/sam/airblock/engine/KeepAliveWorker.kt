@@ -1,10 +1,7 @@
 package com.sam.airblock.engine
 
 import android.app.ActivityManager
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.content.Context
-import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -14,8 +11,7 @@ import com.sam.airblock.data.NetMode
 import com.sam.airblock.data.PlaneAlertRepo
 import com.sam.airblock.data.SettingsStore
 import com.sam.airblock.data.WidgetStateStore
-import com.sam.airblock.widget.AirblockWidget
-import com.sam.airblock.widget.AirblockWidgetReceiver
+import com.sam.airblock.widget.Widgets
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,10 +26,7 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
 
     override suspend fun doWork(): Result {
         val ctx = applicationContext
-        val widgetPlaced = AppWidgetManager.getInstance(ctx)
-            .getAppWidgetIds(ComponentName(ctx, AirblockWidgetReceiver::class.java))
-            .isNotEmpty()
-        if (!widgetPlaced) {
+        if (!Widgets.anyPlaced(ctx)) {
             unschedule(ctx)
             return Result.success()
         }
@@ -77,7 +70,7 @@ class KeepAliveWorker(context: Context, params: WorkerParameters) :
         val (prev, next) = WidgetStateStore.update(ctx) { s ->
             if (!s.markedStale && s.isStaleAt(now)) s.copy(markedStale = true) else s
         }
-        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(ctx)
+        if (prev.renderKey() != next.renderKey()) Widgets.updateAll(ctx)
     }
 
     @Suppress("DEPRECATION") // getRunningServices still works for our OWN service

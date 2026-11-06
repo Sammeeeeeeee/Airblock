@@ -124,6 +124,8 @@ private const val PHOTO_WIDTH_FRACTION = 0.42f
 private fun WidgetState.drawnFields() = copy(
     hex = null, photoCredit = null, refreshStage = null, stages = emptyList(),
     lastError = null, modeLabel = null, errorCount = errorCount.coerceAtMost(1),
+    // Only the Flight strip shows where to look and the climb arrow
+    bearingDeg = null, elevationDeg = null, verticalRateFpm = null,
 )
 
 /**

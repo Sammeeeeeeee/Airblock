@@ -1,6 +1,6 @@
 # Airblock
 
-A 4×2 Android home-screen widget showing the **nearest aircraft** overhead: callsign, aircraft
+A 4×2 Android home-screen widget (plus the slimmer **Flight strip**, below) showing the **nearest aircraft** overhead: callsign, aircraft
 type, photo, origin → destination with country flags, plus altitude (ft), ground speed (mph) and
 distance (km). Emergency squawks (7500/7600/7700) appear as a red alert chip. Material 3
 Expressive with full dynamic color.
@@ -15,6 +15,38 @@ Built to be **as light as possible** for 24/7 use:
 - Location is read from the system's cached fused fix (free); at most one balanced-power fix
   per 10 min; user-saved home coordinates as fallback.
 - Widget re-renders only when visible data actually changed.
+
+## Flight strip
+A second widget, next to the card above. It shows the nearest aircraft in less space, and only
+its own shapes cover the wallpaper: the rest of the widget is see-through.
+
+- **The whole photo**, never cropped or zoomed, joined to the card as one band — tight corners
+  where they meet, round ones outside, like Material 3 Expressive's connected button groups.
+- **Callsign with the model's and the airline's logos** beside it ("BAW8KC · A320neo · BA").
+  Airbus and Boeing 717/777 logos drop the maker's wordmark so they fit beside the callsign.
+- **The route under it**: `LHR ∿✈── GLA · 34 min left`, the wavy line showing how far along
+  the flight is.
+- **A stats pill coming off the photo**, docked along the band's bottom and notched into the
+  photo, so it costs no extra height. Tap it for the next page, or let it roll on by itself every
+  8 s: height (with a climb/descent arrow), speed and distance · where to look (a compass needle,
+  "NW 34° up") · landing time and delay (with flight times on) · registration, type and Mach. An
+  emergency squawk goes first.
+- **Taps:** the photo opens Airblock; the card refreshes, with a spinner on the photo's corner
+  until it is done; the pill turns the page.
+- **The airline's colours.** The strip takes its tones from the airline's logo (Material's
+  colour-from-content, set in OkLCH so every livery keeps the same contrast in light and dark).
+  No logo, or one with no real colour: the wallpaper's colours. Military aircraft and emergencies
+  turn it red, other special aircraft tertiary.
+- Two cells tall gives all of that; one cell gives the photo and the card. A new aircraft's lines
+  roll in on the Material 3 Expressive spring.
+
+Text is Google Sans Flex, the Material 3 Expressive typeface (SIL Open Font License, subset
+bundled; licence in `app/src/main/assets/licenses`). Launchers refuse app fonts in widget text,
+so the strip draws its text as images the launcher tints: it still follows light and dark.
+
+**On Niagara:** place it under the clock, 4 wide. The strip keeps clear of the A–Z bar on the
+right, where Niagara takes taps, and nothing in it needs a swipe, so it never fights Niagara's own
+gestures.
 
 ## Alerts
 Optional heads-up notifications when something worth looking up at goes over: emergency squawks,
@@ -58,6 +90,11 @@ refreshes, so they only fire while your home screen is on screen.
 ## Build
 Requires Android Studio (or Android SDK 35 + JDK 17). `gradlew assembleDebug`, deploy with
 `gradlew installDebug` over (wireless) ADB. minSdk 31 (Android 12+).
+
+Widget renders without a phone (Robolectric draws the real RemoteViews through Android's own
+widget host): `gradle testDebugUnitTest -Pscreenshots`. PNGs go to `STRIP_RENDER_DIR`
+(default `app/build/strip-renders`); `STRIP_SAMPLE_PHOTO`, `STRIP_SAMPLE_MODEL` and
+`STRIP_SAMPLE_AIRLINE` can point at a cached photo and logos to draw with.
 
 After placing the widget: open the Airblock app once to grant **precise location ("Allow all
 the time")** and **Usage access**, and optionally set a home-location fallback.

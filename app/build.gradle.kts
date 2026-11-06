@@ -19,6 +19,11 @@ val aeroApiKeySeed: String = run {
     props.getProperty("AERO_API_KEY") ?: System.getenv("AERO_API_KEY") ?: ""
 }
 
+// Off-device widget renders (Robolectric draws the real RemoteViews through
+// Android's own AppWidgetHostView): gradle testDebugUnitTest -Pscreenshots.
+// Opt-in, so everyday CI runs stay as light as they were.
+val screenshots = providers.gradleProperty("screenshots").isPresent
+
 android {
     namespace = "com.sam.airblock"
     compileSdk = 35
@@ -27,8 +32,8 @@ android {
         applicationId = "com.sam.airblock"
         minSdk = 31
         targetSdk = 35
-        versionCode = 37
-        versionName = "6.9"
+        versionCode = 40
+        versionName = "7.2"
 
         // Seed only — the running key lives in EncryptedSharedPreferences. Empty
         // unless AERO_API_KEY is set in local.properties / the environment.
@@ -79,6 +84,21 @@ android {
         buildConfig = true
     }
 
+    if (screenshots) {
+        sourceSets["test"].java.srcDir("src/screenshotTest/java")
+        testOptions.unitTests.isIncludeAndroidResources = true
+        testOptions.unitTests.all { test ->
+            // Where Robolectric fetches its Android runtime; default Maven Central
+            System.getenv("ROBOLECTRIC_REPO_URL")?.let {
+                test.systemProperty("robolectric.dependency.repo.url", it)
+            }
+            System.getenv("STRIP_RENDER_DIR")?.let { test.systemProperty("strip.render.dir", it) }
+            System.getenv("STRIP_SAMPLE_PHOTO")?.let { test.systemProperty("strip.sample.photo", it) }
+            System.getenv("STRIP_SAMPLE_MODEL")?.let { test.systemProperty("strip.sample.model", it) }
+            System.getenv("STRIP_SAMPLE_AIRLINE")?.let { test.systemProperty("strip.sample.airline", it) }
+        }
+    }
+
     lint {
         // The androidx 1.5/1.11-alpha artifacts bundle lint checks built for a
         // newer lint than AGP 8.7's; the NullSafeMutableLiveData detector
@@ -120,5 +140,9 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
     testImplementation("junit:junit:4.13.2")
+    if (screenshots) {
+        testImplementation("org.robolectric:robolectric:4.17")
+        testImplementation("androidx.test:core:1.7.0")
+    }
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

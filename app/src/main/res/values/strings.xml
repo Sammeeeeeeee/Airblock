@@ -6,4 +6,6 @@
     <string name="notif_text">Required notification for widget — long-press to hide</string>
     <string name="no_aircraft">No aircraft nearby</string>
     <string name="no_location">Location unavailable</string>
+    <string name="strip_label">Flight strip</string>
+    <string name="strip_description">The nearest aircraft: its whole photo, callsign with model and airline logos, route and time left, and stats that roll on by themselves or with a tap.</string>
 </resources>
