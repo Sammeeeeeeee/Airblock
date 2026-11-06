@@ -58,6 +58,8 @@ data class StatPage(val kind: Kind, val parts: List<Part>, val description: Stri
     /** Space between two stats. */
     data object Gap : Part
     data class Arrow(val climb: Boolean) : Part
+    /** A small compass dial, its needle on the aircraft's bearing from you. */
+    data class Compass(val bearingDeg: Double) : Part
 }
 
 /** Container colours for the card. */
@@ -175,7 +177,10 @@ object StripContents {
         return StatPage(StatPage.Kind.LIVE, parts, words.joinToString(", "))
     }
 
-    /** "Look NW  34° up": where in the sky to find it. Null without a bearing. */
+    /**
+     * Where in the sky to find it: a compass needle on the real bearing, then
+     * "NW  34° up". Null without a bearing.
+     */
     private fun lookPage(s: WidgetState): StatPage? {
         val bearing = s.bearingDeg ?: return null
         val dir = Units.compass8(bearing)
@@ -184,7 +189,7 @@ object StripContents {
             return StatPage(StatPage.Kind.LOOK,
                 listOf(StatPage.Unit("Look"), StatPage.Value("straight up")), "Look straight up")
         }
-        val parts = mutableListOf<StatPage.Part>(StatPage.Unit("Look"), StatPage.Value(dir))
+        val parts = mutableListOf<StatPage.Part>(StatPage.Compass(bearing), StatPage.Value(dir))
         val up = deg?.let(::elevationWords)
         if (up != null) parts += listOf(StatPage.Gap, StatPage.Value(up.substringBefore(' ')), StatPage.Unit("up"))
         return StatPage(StatPage.Kind.LOOK, parts, "Look $dir" + (up?.let { ", $it" } ?: ""))

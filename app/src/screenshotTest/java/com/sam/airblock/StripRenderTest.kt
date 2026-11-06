@@ -107,6 +107,9 @@ class StripRenderTest {
                     save(bmp, "${name}_${tier}_${if (night) "dark" else "light"}_$i")
                 }
             }
+            // A full-width Niagara widget on a typical phone
+            val wide = host(380f, 100f, FlightStrip.preview(ctx, ba(), 380f, listOf(100f), now))
+            pages(wide).forEachIndexed { i, bmp -> save(bmp, "ba_wide_${if (night) "dark" else "light"}_$i") }
         }
     }
 

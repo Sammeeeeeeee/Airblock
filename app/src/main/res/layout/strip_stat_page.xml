@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One page of the stats pill: a tinted pill holding one pre-drawn line and
-     the page dots that show it pages up and down. -->
+<!-- One page of the stats pill: one pre-drawn line and the page dots that
+     show it pages up and down. Sized and padded from code (FlightStrip.stats). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/strip_page"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:background="@drawable/strip_pill"
+    android:background="@drawable/strip_page_fill"
     android:gravity="center_vertical"
     android:orientation="horizontal">
 

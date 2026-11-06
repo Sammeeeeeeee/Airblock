@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.net.Uri
@@ -72,6 +73,7 @@ object FlightStrip {
 
     fun resetRenderCaches() {
         Cache.clear()
+        synchronized(seeds) { seeds.clear() }
         synchronized(lastSent) { lastSent.clear() }
     }
 
@@ -208,52 +210,67 @@ object FlightStrip {
     private fun renderTier(context: Context, art: StripArt, f: Frame, tier: StripTier): RemoteViews {
         val c = f.content
         val d = art.density
-        val colors = Colors.of(StripContents.palette(f.state))
+        fun px(dp: Float) = (dp * d).roundToInt()
+        val colors = palette(art, f.state, c.airlineLogo)
         val rv = RemoteViews(context.packageName, R.layout.strip_root)
         val k = f.fontScale
 
-        // ---- geometry: the photo sets the scale; the pill hangs off its corner
-        val photoH = (tier.photoDp * d).roundToInt()
+        // ---- geometry, in whole pixels: the stats stack hides its other
+        // pages behind the front one only if the two line up exactly.
+        // Photo and card are one band, joined like an M3 Expressive connected
+        // group; the stats pill docks along the band's bottom, from the photo
+        // across the join into the card, so it costs no extra height.
+        val photoH = px(tier.photoDp)
         val photoW = art.photoWidth(c.photoPath, photoH)
-        val photoWdp = photoW / d
+        val cardLeft = photoW + px(JOIN_GAP_DP)
+        val cardMax = (f.widthDp * d).toInt() - cardLeft - px(EDGE_DP)
         val showStats = tier.stats && c.pages.isNotEmpty()
-        val pillH = tier.pillDp * d
-        val pillLeft = photoW - tier.pillOverlapDp * d
-        val pillTop = photoH - tier.pillRiseDp * d
+        val pillH = px(tier.pillDp)
+        val pillLeft = photoW - px(tier.pillOverlapDp)
+        val pillTop = photoH - px(tier.pillInsetDp) - pillH
+        val pillEnd = px(PILL_END_DP)
+
+        // ---- the card: its lines first, then whatever width the pill needs
+        val pad = px(CARD_PAD_H_DP)
+        val lines = cardLines(art, f, tier, k, max(0, cardMax - 2 * pad).toFloat(), colors)
+        var cardW = ceil(lines.width).toInt() + 2 * pad
+        var pages: StatsLayout? = null
+        if (showStats) {
+            pages = statsLayout(art, c.pages, tier, k, cardLeft + cardMax - pillEnd - pillLeft, pillH)
+            cardW = max(cardW, pillLeft + pages.pillW + pillEnd - cardLeft)
+        }
+        cardW = cardW.coerceAtMost(cardMax)
+        // The pill's hairline of wallpaper equals its inset, so the cut-out
+        // meets the band's bottom edge and the photo is notched cleanly
         val cut = if (showStats) CutOut(
-            RectF(pillLeft, pillTop, photoW + pillH, pillTop + pillH),
-            radius = pillH / 2f, gap = CUT_GAP_DP * d,
+            RectF(pillLeft.toFloat(), pillTop.toFloat(), (photoW + pillH).toFloat(), (pillTop + pillH).toFloat()),
+            radius = pillH / 2f, gap = px(tier.pillInsetDp).toFloat(),
         ) else null
 
-        photo(context, art, rv, f, tier, photoW, photoH, cut, colors)
+        photo(context, art, rv, f, photoW, photoH, cut, colors)
         status(context, rv, f, colors)
-
-        // ---- the card beside the photo
-        val budget = (f.widthDp - photoWdp - CARD_GAP_DP - 2 * CARD_PAD_H_DP - EDGE_DP) * d
-        val card = card(context, art, f, tier, k, max(0f, budget), colors)
         rv.removeAllViews(R.id.strip_card_slot)
-        rv.addStableView(R.id.strip_card_slot, card, 1)
-        rv.setViewLayoutMargin(R.id.strip_card_slot, RemoteViews.MARGIN_START,
-            photoWdp + CARD_GAP_DP, TypedValue.COMPLEX_UNIT_DIP)
+        rv.addStableView(R.id.strip_card_slot,
+            card(context, f, tier, lines, cardW, photoH, colors, centred = !showStats), 1)
+        rv.marginPx(R.id.strip_card_slot, RemoteViews.MARGIN_START, cardLeft)
 
-        // ---- the stats pill (FULL only)
-        if (showStats) stats(context, art, rv, f, tier, k, pillLeft, pillTop, pillH)
-        else rv.setViewVisibility(R.id.strip_stats_frame, View.GONE)
+        if (pages != null) {
+            stats(context, rv, f, pages, colors, pillLeft, pillTop, cardLeft + cardW - pillEnd - pillLeft, pillH)
+        } else rv.setViewVisibility(R.id.strip_stats_frame, View.GONE)
         return rv
     }
 
     private fun photo(
-        context: Context, art: StripArt, rv: RemoteViews, f: Frame, tier: StripTier,
-        w: Int, h: Int, cut: CutOut?, colors: Colors,
+        context: Context, art: StripArt, rv: RemoteViews, f: Frame,
+        w: Int, h: Int, cut: CutOut?, colors: Palette,
     ) {
         val d = art.density
-        val radius = tier.photoRadiusDp * d
+        val radii = Radii(OUTER_DP * d, INNER_DP * d)
         val ok = f.state.status == WidgetState.Status.OK
-        rv.setViewLayoutWidth(R.id.strip_photo, w / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutHeight(R.id.strip_photo, h / d, TypedValue.COMPLEX_UNIT_DIP)
+        rv.sizePx(R.id.strip_photo, w, h)
         val cutKey = cut?.rect?.toShortString()
         val picture = f.content.photoPath?.let { path ->
-            Cache.get("photo|$path|$w|$h|$cutKey") { art.photo(path, w, h, radius, cut) }
+            Cache.get("photo|$path|$w|$h|$cutKey|$radii") { art.photo(path, w, h, radii, cut) }
         }
         if (picture != null) {
             rv.setImageViewBitmap(R.id.strip_photo, picture)
@@ -263,9 +280,9 @@ object FlightStrip {
             // No photo (yet): a tinted tile with the type's silhouette. The
             // tile is a separate view from the photo so a tint never lands on it.
             rv.setImageViewBitmap(R.id.strip_photo_tile,
-                Cache.get("tile|$w|$h|$cutKey") { art.tile(w, h, radius, cut) })
-            rv.setColorStateList(R.id.strip_photo_tile, "setImageTintList",
-                if (ok) colors.badge else R.color.strip_secondary_container)
+                Cache.get("tile|$w|$h|$cutKey|$radii") { art.tile(w, h, radii, cut) })
+            rv.tint(R.id.strip_photo_tile, "setImageTintList",
+                if (ok) colors.badge else Tint.Res(R.color.strip_secondary_container))
             val iconRes = when {
                 ok -> AircraftIcons.iconFor(f.state.typeCode, f.state.category)
                 f.state.status == WidgetState.Status.NO_AIRCRAFT -> R.drawable.ic_flight
@@ -275,37 +292,34 @@ object FlightStrip {
             val iconPx = (h * if (ok) 0.62f else 0.42f).roundToInt()
             rv.setImageViewBitmap(R.id.strip_photo_icon,
                 Cache.get("icon|$iconRes|$iconPx") { art.icon(iconRes, iconPx, if (ok) 0f else 45f) })
-            rv.setColorStateList(R.id.strip_photo_icon, "setImageTintList",
-                if (ok) colors.onBadge else R.color.strip_on_secondary_container)
+            rv.tint(R.id.strip_photo_icon, "setImageTintList",
+                if (ok) colors.onBadge else Tint.Res(R.color.strip_on_secondary_container))
             rv.setViewVisibility(R.id.strip_photo_icon, View.VISIBLE)
             // Centre the icon on the tile (the group is a plain FrameLayout)
-            rv.setViewLayoutMargin(R.id.strip_photo_icon, RemoteViews.MARGIN_START,
-                (w - iconPx) / 2f / d, TypedValue.COMPLEX_UNIT_DIP)
-            rv.setViewLayoutMargin(R.id.strip_photo_icon, RemoteViews.MARGIN_TOP,
-                (h - iconPx) / 2f / d, TypedValue.COMPLEX_UNIT_DIP)
+            rv.marginPx(R.id.strip_photo_icon, RemoteViews.MARGIN_START, (w - iconPx) / 2)
+            rv.marginPx(R.id.strip_photo_icon, RemoteViews.MARGIN_TOP, (h - iconPx) / 2)
             rv.setContentDescription(R.id.strip_photo, "Open Airblock")
         }
         rv.setViewVisibility(R.id.strip_photo, if (picture != null) View.VISIBLE else View.GONE)
         rv.setViewVisibility(R.id.strip_photo_tile, if (picture != null) View.GONE else View.VISIBLE)
-        rv.setViewLayoutWidth(R.id.strip_photo_tile, w / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutHeight(R.id.strip_photo_tile, h / d, TypedValue.COMPLEX_UNIT_DIP)
+        rv.sizePx(R.id.strip_photo_tile, w, h)
         rv.setOnClickPendingIntent(R.id.strip_photo, openApp(context))
         rv.setOnClickPendingIntent(R.id.strip_photo_tile, openApp(context))
     }
 
-    private fun status(context: Context, rv: RemoteViews, f: Frame, colors: Colors) {
+    private fun status(context: Context, rv: RemoteViews, f: Frame, colors: Palette) {
         val st = f.status
         if (st == StripStatus.NONE) {
             rv.setViewVisibility(R.id.strip_status, View.GONE)
             return
         }
         rv.setViewVisibility(R.id.strip_status, View.VISIBLE)
-        rv.setColorStateList(R.id.strip_status, "setBackgroundTintList", colors.container)
+        rv.tint(R.id.strip_status, "setBackgroundTintList", colors.container)
         val spinning = st == StripStatus.SPINNER
         rv.setViewVisibility(R.id.strip_status_spin, if (spinning) View.VISIBLE else View.GONE)
         rv.setViewVisibility(R.id.strip_status_icon, if (spinning) View.GONE else View.VISIBLE)
         if (spinning) {
-            rv.setColorStateList(R.id.strip_status_spin, "setIndeterminateTintList", colors.accent)
+            rv.tint(R.id.strip_status_spin, "setIndeterminateTintList", colors.accent)
             rv.setContentDescription(R.id.strip_status, "Refreshing")
         } else {
             val (icon, tint, what) = when (st) {
@@ -321,25 +335,23 @@ object FlightStrip {
         rv.setOnClickPendingIntent(R.id.strip_status, broadcast(context, f.id, ACTION_REFRESH))
     }
 
+    /** The card's two lines, drawn and measured before the card is sized. */
+    private class CardLines(
+        val title: Bitmap, val mark: Bitmap?, val tile: Bitmap?,
+        val line2: List<Pair<Bitmap, Tint>>, val width: Float, val height: Float,
+        val description: String,
+    )
+
     /**
-     * The card: callsign + model mark + airline tile, then the route. Pieces
-     * give way in order when the width runs out — the mark shrinks, then
-     * goes, before the callsign is ever cut.
+     * Callsign + model mark + airline tile, then the route. Pieces give way in
+     * order when the width runs out — the mark shrinks, then goes, before the
+     * callsign is ever cut.
      */
-    private fun card(
-        context: Context, art: StripArt, f: Frame, tier: StripTier, k: Float,
-        budget: Float, colors: Colors,
-    ): RemoteViews {
+    private fun cardLines(
+        art: StripArt, f: Frame, tier: StripTier, k: Float, budget: Float, colors: Palette,
+    ): CardLines {
         val d = art.density
         val c = f.content
-        // A different (identical) card layout per aircraft: the launcher then
-        // builds it fresh and plays the roll-in exactly when the plane changes
-        val variant = abs("${f.state.hex}|${f.state.status}".hashCode()) % CARDS.size
-        val rv = RemoteViews(context.packageName, CARDS[variant])
-        rv.setColorStateList(R.id.strip_card, "setBackgroundTintList", colors.container)
-
-        // ---- line 1: callsign, model mark, airline tile. They step down in
-        // size together until all three fit; only then does the mark go.
         val tilePx = (tier.tileDp * d).roundToInt()
         val tile = c.airlineLogo?.let { path ->
             Cache.get("airline|$path|$tilePx") { art.airlineTile(path, tilePx, tilePx * 0.3f) }
@@ -363,31 +375,20 @@ object FlightStrip {
             val m = markAt(tier.markDp * step)
             val need = art.measure(c.title, StripType.HERO, tPx) + tileW +
                 (m?.let { it.width + MARK_GAP_DP * d } ?: 0f)
-            if (need <= budget) { titlePx = tPx; mark = m; break }
             titlePx = tPx
+            if (need <= budget) { mark = m; break }
         }
         val markW = mark?.let { it.width + MARK_GAP_DP * d } ?: 0f
         val titleMax = max(titlePx * 2, budget - tileW - markW)
         val title = Cache.get("title|${c.title}|$titlePx|${titleMax.roundToInt()}") {
             art.text(c.title, StripType.HERO, titlePx, maxWidthPx = titleMax)
         }
-        rv.setImageViewBitmap(R.id.strip_title, title)
-        rv.setColorStateList(R.id.strip_title, "setImageTintList", colors.main)
-        if (mark != null) {
-            rv.setImageViewBitmap(R.id.strip_mark, mark)
-            rv.setColorStateList(R.id.strip_mark, "setImageTintList", colors.variant)
-            rv.setViewVisibility(R.id.strip_mark, View.VISIBLE)
-        } else rv.setViewVisibility(R.id.strip_mark, View.GONE)
-        if (tile != null) {
-            rv.setImageViewBitmap(R.id.strip_tile, tile)
-            rv.setViewVisibility(R.id.strip_tile, View.VISIBLE)
-        } else rv.setViewVisibility(R.id.strip_tile, View.GONE)
 
-        // ---- line 2: the first option that fits
+        // Line 2: the first option that fits
         val codePx = tier.codeSp * k * d
         val textPx = tier.line2Sp * k * d
         val minRoute = codePx * 1.9f
-        val maxRoute = codePx * 3.2f
+        val maxRoute = codePx * 3.4f
         val runGap = RUN_GAP_DP * d
         fun fixedW(runs: List<StripContent.Run>) = runs.sumOf { r ->
             when (r) {
@@ -399,14 +400,14 @@ object FlightStrip {
         val runs = c.line2.firstOrNull { r ->
             fixedW(r) + (if (r.any { it is StripContent.Route }) minRoute else 0f) <= budget
         } ?: c.line2.last()
-        val routeW = (budget - fixedW(runs)).coerceIn(minRoute, maxRoute).roundToInt()
+        val line1W = title.width + markW + tileW
+        // The route line stretches to the callsign line's width, within limits
+        val routeW = (max(line1W, fixedW(runs) + minRoute) - fixedW(runs))
+            .coerceIn(minRoute, maxRoute).coerceAtMost(max(minRoute, budget - fixedW(runs))).roundToInt()
         // Codes and the small text share one baseline: both drawn in the codes' line box
         val box = ceil(StripType.HERO.ascentEm * codePx) to ceil(StripType.HERO.descentEm * codePx)
-        val slots = intArrayOf(R.id.strip_l2_a, R.id.strip_l2_b, R.id.strip_l2_c, R.id.strip_l2_d)
         var spent = 0f
-        slots.forEachIndexed { i, slot ->
-            val r = runs.getOrNull(i)
-            if (r == null) { rv.setViewVisibility(slot, View.GONE); return@forEachIndexed }
+        val line2 = runs.take(4).map { r ->
             val room = (budget - spent).roundToInt()
             val bmp = when (r) {
                 is StripContent.Text -> if (r.code) Cache.get("code|${r.text}|$codePx") {
@@ -420,81 +421,142 @@ object FlightStrip {
                 }
             }
             spent += bmp.width + runGap
-            rv.setViewVisibility(slot, View.VISIBLE)
-            rv.setImageViewBitmap(slot, bmp)
-            rv.setColorStateList(slot, "setImageTintList", when (r) {
+            bmp to when (r) {
                 is StripContent.Route -> colors.accent
                 is StripContent.Text -> colors.tone(r.tone)
-            })
+            }
         }
-        rv.setContentDescription(R.id.strip_card, c.description + ". Tap to refresh")
+        val line2W = spent - runGap
+        val h = max(title.height.toFloat(), tile?.height?.toFloat() ?: 0f) +
+            LINE_GAP_DP * d + (line2.maxOfOrNull { it.first.height } ?: 0)
+        return CardLines(title, mark, tile, line2, max(line1W, line2W), h, c.description)
+    }
+
+    /** The card around [lines]: [w]×[h] px, lines at the top (or centred). */
+    private fun card(
+        context: Context, f: Frame, tier: StripTier, lines: CardLines,
+        w: Int, h: Int, colors: Palette, centred: Boolean,
+    ): RemoteViews {
+        val d = context.resources.displayMetrics.density
+        // A different (identical) card layout per aircraft: the launcher then
+        // builds it fresh and plays the roll-in exactly when the plane changes
+        val variant = abs("${f.state.hex}|${f.state.status}".hashCode()) % CARDS.size
+        val rv = RemoteViews(context.packageName, CARDS[variant])
+        rv.tint(R.id.strip_card, "setBackgroundTintList", colors.container)
+        rv.sizePx(R.id.strip_card, w, h)
+        val padH = (CARD_PAD_H_DP * d).roundToInt()
+        val top = if (centred) ((h - lines.height) / 2f).roundToInt().coerceAtLeast(0)
+        else (tier.cardTopDp * d).roundToInt()
+        rv.setViewPadding(R.id.strip_card, padH, top, padH, 0)
+
+        rv.setImageViewBitmap(R.id.strip_title, lines.title)
+        rv.tint(R.id.strip_title, "setImageTintList", colors.main)
+        if (lines.mark != null) {
+            rv.setImageViewBitmap(R.id.strip_mark, lines.mark)
+            rv.tint(R.id.strip_mark, "setImageTintList", colors.variant)
+            rv.setViewVisibility(R.id.strip_mark, View.VISIBLE)
+        } else rv.setViewVisibility(R.id.strip_mark, View.GONE)
+        if (lines.tile != null) {
+            rv.setImageViewBitmap(R.id.strip_tile, lines.tile)
+            rv.setViewVisibility(R.id.strip_tile, View.VISIBLE)
+        } else rv.setViewVisibility(R.id.strip_tile, View.GONE)
+        val slots = intArrayOf(R.id.strip_l2_a, R.id.strip_l2_b, R.id.strip_l2_c, R.id.strip_l2_d)
+        slots.forEachIndexed { i, slot ->
+            val entry = lines.line2.getOrNull(i)
+            if (entry == null) { rv.setViewVisibility(slot, View.GONE); return@forEachIndexed }
+            rv.setViewVisibility(slot, View.VISIBLE)
+            rv.setImageViewBitmap(slot, entry.first)
+            rv.tint(slot, "setImageTintList", entry.second)
+        }
+        rv.setContentDescription(R.id.strip_card, lines.description + ". Tap to refresh")
         rv.setOnClickPendingIntent(R.id.strip_card, broadcast(context, f.id, ACTION_REFRESH))
         return rv
     }
 
+    /** The stats pages, drawn to fit the pill, and the pill's width (px). */
+    private class StatsLayout(
+        val pages: List<StatPage>, val bitmaps: List<Bitmap>, val dots: List<Bitmap>, val pillW: Int,
+    )
+
     /**
-     * The stats pill: a StackView whose front page sits in the photo's
-     * cut-out. Every page is drawn the same width and carries page dots
-     * (stacked, like the pages) so it reads as something that pages up/down.
+     * Pages fitted to [room] px: a page too wide loses its last stat (never
+     * its first). The pill takes the widest page's width.
      */
-    private fun stats(
-        context: Context, art: StripArt, rv: RemoteViews, f: Frame, tier: StripTier,
-        k: Float, pillLeft: Float, pillTop: Float, pillH: Float,
-    ) {
+    private fun statsLayout(
+        art: StripArt, all: List<StatPage>, tier: StripTier, k: Float, room: Int, pillH: Int,
+    ): StatsLayout {
         val d = art.density
         val valuePx = tier.valueSp * k * d
         val unitPx = tier.unitSp * k * d
-        val pages = f.content.pages
-        val textH = art.statLineHeight(valuePx)
-        // Every page the same width, so the pages behind hide under the front one
-        val textW = pages.maxOf { art.statPageWidth(it.parts, valuePx, unitPx) }
+        val dots = art.pageDots(all.size, pillH * 0.62f)
+        val chrome = pagePad(d).let { it.start + it.gap + it.end } + dots.first().width
+        val pages = all.map { p ->
+            var parts = p.parts
+            while (art.statPageWidth(parts, valuePx, unitPx) + chrome > room && parts.contains(StatPage.Gap)) {
+                parts = parts.subList(0, parts.lastIndexOf(StatPage.Gap))
+            }
+            if (parts === p.parts) p else p.copy(parts = parts)
+        }
         val bitmaps = pages.map { p ->
             Cache.get("page|${p.parts}|$valuePx|$unitPx") { art.statPage(p.parts, valuePx, unitPx) }
         }
-        val padV = (pillH - textH) / 2f / d
-        val dots = art.pageDots(pages.size, pillH * 0.62f)
-        val pillW = textW + (PAGE_PAD_START_DP + DOTS_GAP_DP + DOTS_END_DP) * d + dots.first().width
-        // StackView puts each page in a frame padded by FRAME_PAD, sizes the
-        // frames to at most 90% of itself and fans the pages behind up and to
-        // the right. The clip frame is exactly the front page's rounded pill,
-        // so none of that fan shows — a swipe rolls the pages through the pill.
-        val pad = FRAME_PAD_DP * d
-        val frameW = pillW + 2 * pad
-        val frameH = pillH + 2 * pad
-        val stackW = ceil(frameW / STACK_FILL) + 1f
-        val stackH = ceil(frameH / STACK_FILL) + 1f
+        return StatsLayout(pages, bitmaps, dots, bitmaps.maxOf { it.width } + chrome)
+    }
+
+    private class PagePad(val start: Int, val gap: Int, val end: Int)
+    private fun pagePad(d: Float) = PagePad((PAGE_PAD_START_DP * d).roundToInt(),
+        (DOTS_GAP_DP * d).roundToInt(), (DOTS_END_DP * d).roundToInt())
+
+    /**
+     * The stats pill: a StackView whose front page sits in the photo's
+     * cut-out and across the join into the card. StackView puts each page in
+     * a frame padded by FRAME_PAD, sizes the frames to at most 90% of itself
+     * and fans the pages behind up and to the right. The clip frame is
+     * exactly the front page, rounded, and the pages are plain rectangles
+     * filling it, so nothing behind shows — a swipe rolls the pages through
+     * the pill. Page dots say it pages. All in whole pixels ([left]…[h]).
+     */
+    private fun stats(
+        context: Context, rv: RemoteViews, f: Frame, layout: StatsLayout, colors: Palette,
+        left: Int, top: Int, w: Int, h: Int,
+    ) {
+        val d = context.resources.displayMetrics.density
+        // StackView: mFramePadding = (int) Math.ceil(density * FRAME_PADDING)
+        val pad = ceil(FRAME_PAD_DP * d).toInt()
+        val stackW = ceil((w + 2 * pad) / STACK_FILL).toInt() + 1
+        val stackH = ceil((h + 2 * pad) / STACK_FILL).toInt() + 1
         rv.setViewVisibility(R.id.strip_stats_frame, View.VISIBLE)
-        rv.setViewLayoutWidth(R.id.strip_stats_frame, pillW / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutHeight(R.id.strip_stats_frame, pillH / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutMargin(R.id.strip_stats_frame, RemoteViews.MARGIN_START, pillLeft / d,
-            TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutMargin(R.id.strip_stats_frame, RemoteViews.MARGIN_TOP, pillTop / d,
-            TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewOutlinePreferredRadius(R.id.strip_stats_frame, pillH / 2f / d,
-            TypedValue.COMPLEX_UNIT_DIP)
+        rv.sizePx(R.id.strip_stats_frame, w, h)
+        rv.marginPx(R.id.strip_stats_frame, RemoteViews.MARGIN_START, left)
+        rv.marginPx(R.id.strip_stats_frame, RemoteViews.MARGIN_TOP, top)
+        rv.setViewOutlinePreferredRadius(R.id.strip_stats_frame, h / 2f, TypedValue.COMPLEX_UNIT_PX)
         // The front page sits at the stack's bottom-left, inside its frame padding
-        rv.setViewLayoutWidth(R.id.strip_stats, stackW / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutHeight(R.id.strip_stats, stackH / d, TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutMargin(R.id.strip_stats, RemoteViews.MARGIN_START, -pad / d,
-            TypedValue.COMPLEX_UNIT_DIP)
-        rv.setViewLayoutMargin(R.id.strip_stats, RemoteViews.MARGIN_TOP, -(stackH - pad - pillH) / d,
-            TypedValue.COMPLEX_UNIT_DIP)
+        rv.sizePx(R.id.strip_stats, stackW, stackH)
+        rv.marginPx(R.id.strip_stats, RemoteViews.MARGIN_START, -pad)
+        rv.marginPx(R.id.strip_stats, RemoteViews.MARGIN_TOP, -(stackH - pad - h))
+        // Text at the pill's left; any width the card added goes before the dots
+        val pp = pagePad(d)
+        val textSlot = w - pp.start - pp.gap - pp.end - layout.dots.first().width
         val items = RemoteViews.RemoteCollectionItems.Builder()
             .setHasStableIds(true)
             .setViewTypeCount(1)
-        pages.forEachIndexed { i, p ->
-            val (bg, fg) = PAGE_COLORS.getValue(p.kind)
+        layout.pages.forEachIndexed { i, p ->
+            val (bg, fg) = colors.page(p.kind)
             val item = RemoteViews(context.packageName, R.layout.strip_stat_page)
-            item.setColorStateList(R.id.strip_page, "setBackgroundTintList", bg)
-            item.setImageViewBitmap(R.id.strip_page_text, bitmaps[i])
-            item.setColorStateList(R.id.strip_page_text, "setImageTintList", fg)
-            item.setViewLayoutWidth(R.id.strip_page_text, textW / d, TypedValue.COMPLEX_UNIT_DIP)
-            item.setViewLayoutMargin(R.id.strip_page_text, RemoteViews.MARGIN_TOP, padV,
-                TypedValue.COMPLEX_UNIT_DIP)
-            item.setViewLayoutMargin(R.id.strip_page_text, RemoteViews.MARGIN_BOTTOM, padV,
-                TypedValue.COMPLEX_UNIT_DIP)
-            item.setImageViewBitmap(R.id.strip_page_dots, dots[i])
-            item.setColorStateList(R.id.strip_page_dots, "setImageTintList", fg)
+            item.tint(R.id.strip_page, "setBackgroundTintList", bg)
+            val text = layout.bitmaps[i]
+            item.setImageViewBitmap(R.id.strip_page_text, text)
+            item.tint(R.id.strip_page_text, "setImageTintList", fg)
+            // The page is exactly w×h: a collection item's root ignores a set
+            // size, so the text's slot and margins add up to it
+            item.setViewLayoutWidth(R.id.strip_page_text, textSlot.toFloat(), TypedValue.COMPLEX_UNIT_PX)
+            item.marginPx(R.id.strip_page_text, RemoteViews.MARGIN_START, pp.start)
+            item.marginPx(R.id.strip_page_text, RemoteViews.MARGIN_TOP, (h - text.height) / 2)
+            item.marginPx(R.id.strip_page_text, RemoteViews.MARGIN_BOTTOM, h - text.height - (h - text.height) / 2)
+            item.marginPx(R.id.strip_page_dots, RemoteViews.MARGIN_START, pp.gap)
+            item.marginPx(R.id.strip_page_dots, RemoteViews.MARGIN_END, pp.end)
+            item.setImageViewBitmap(R.id.strip_page_dots, layout.dots[i])
+            item.tint(R.id.strip_page_dots, "setImageTintList", fg)
             item.setContentDescription(R.id.strip_page, p.description + ". Swipe or tap for more")
             item.setOnClickFillInIntent(R.id.strip_page, Intent().putExtra(EXTRA_PAGE, i))
             items.addItem(p.kind.ordinal.toLong(), item)
@@ -502,7 +564,7 @@ object FlightStrip {
         rv.setRemoteAdapter(R.id.strip_stats, items.build())
         rv.setPendingIntentTemplate(R.id.strip_stats, pageTemplate(context, f.id))
         // Only right after a tap: a later update must not undo a swipe
-        f.jump?.let { rv.setDisplayedChild(R.id.strip_stats, it.mod(pages.size)) }
+        f.jump?.let { rv.setDisplayedChild(R.id.strip_stats, it.mod(layout.pages.size)) }
     }
 
     // ---- intents ------------------------------------------------------------
@@ -534,16 +596,25 @@ object FlightStrip {
 
     private const val DEFAULT_WIDTH_DP = 312f
     /**
+     * The band's shape: outer corners (M3 "large"), the tighter corners where
+     * photo and card join, and the hairline of wallpaper between them. The
+     * pill sits one hairline in from the card's end and the band's bottom,
+     * so its round end is concentric with the card's corner (16 = 13 + 3).
+     * strip_card.xml repeats OUTER and INNER.
+     */
+    private const val OUTER_DP = 16f
+    private const val INNER_DP = 6f
+    private const val JOIN_GAP_DP = 3f
+    private const val PILL_END_DP = 3f
+    private const val LINE_GAP_DP = 2f
+    /**
      * Kept clear at the widget's right edge. Niagara's A–Z scroller wins taps
      * where a wide widget overlaps it (help.niagaralauncher.app, "Widgets").
      */
     private const val EDGE_DP = 8f
-    private const val CARD_GAP_DP = 6f
-    private const val CARD_PAD_H_DP = 13f
+    private const val CARD_PAD_H_DP = 12f
     private const val MARK_GAP_DP = 6f
     private const val RUN_GAP_DP = 4f
-    /** Wallpaper showing between the photo and the pill that comes off it. */
-    private const val CUT_GAP_DP = 3f
     private const val PAGE_PAD_START_DP = 13f
     private const val DOTS_GAP_DP = 8f
     private const val DOTS_END_DP = 11f
@@ -557,15 +628,6 @@ object FlightStrip {
     /** Identical card layouts: switching between them rebuilds the card. */
     private val CARDS = intArrayOf(
         R.layout.strip_card_0, R.layout.strip_card_1, R.layout.strip_card_2, R.layout.strip_card_3,
-    )
-
-    /** Each stats page has its own tonal container, so the peeking edges differ. */
-    private val PAGE_COLORS = mapOf(
-        StatPage.Kind.ALERT to (R.color.strip_error_container to R.color.strip_on_error_container),
-        StatPage.Kind.LIVE to (R.color.strip_secondary_container to R.color.strip_on_secondary_container),
-        StatPage.Kind.LOOK to (R.color.strip_tertiary_container to R.color.strip_on_tertiary_container),
-        StatPage.Kind.TRIP to (R.color.strip_primary_container to R.color.strip_on_primary_container),
-        StatPage.Kind.AIRFRAME to (R.color.strip_surface_variant to R.color.strip_on_surface_variant),
     )
 
     /** Rendered bitmaps, least recently used dropped first. */
@@ -594,8 +656,10 @@ object FlightStrip {
  */
 internal enum class StripTier(
     val idealHeightDp: Float,
+    /** The band's height: photo and card. */
     val photoDp: Float,
-    val photoRadiusDp: Float,
+    /** Card padding above line 1 (lines are centred when there is no pill). */
+    val cardTopDp: Float,
     val titleSp: Float,
     val codeSp: Float,
     val line2Sp: Float,
@@ -604,16 +668,17 @@ internal enum class StripTier(
     /** Whether the stats pill shows. */
     val stats: Boolean,
     val pillDp: Float,
-    /** How far the pill reaches back over the photo, and up into it. */
+    /** How far the pill reaches back over the photo. */
     val pillOverlapDp: Float,
-    val pillRiseDp: Float,
+    /** Pill bottom to band bottom: the cut-out's hairline, so the photo is notched cleanly. */
+    val pillInsetDp: Float,
     val valueSp: Float,
     val unitSp: Float,
 ) {
     /** One row: photo + card. */
-    COMPACT(58f, 56f, 14f, 18f, 12.5f, 11.5f, 10f, 17f, false, 0f, 0f, 0f, 0f, 0f),
-    /** Photo + card + the stats pill coming off the photo. */
-    FULL(96f, 76f, 18f, 20f, 13.5f, 12f, 11f, 19f, true, 30f, 36f, 13f, 14f, 11f);
+    COMPACT(58f, 56f, 0f, 18f, 12.5f, 11.5f, 10f, 17f, false, 0f, 0f, 0f, 0f, 0f),
+    /** One taller band: the stats pill docks along its bottom, across photo and card. */
+    FULL(80f, 78f, 7f, 19f, 13f, 11.5f, 11f, 18f, true, 26f, 30f, 3f, 13f, 10.5f);
 
     companion object {
         /**
@@ -633,35 +698,93 @@ internal enum class StripTier(
     }
 }
 
-/** Colour resources for one palette (all follow light/dark and the wallpaper). */
-private data class Colors(
-    val container: Int, val main: Int, val variant: Int, val accent: Int,
-    val positive: Int, val negative: Int, val badge: Int, val onBadge: Int,
+/** A colour the launcher resolves: a theme resource, or a light/dark pair. */
+internal sealed interface Tint {
+    data class Res(val id: Int) : Tint
+    data class Duo(val light: Int, val dark: Int) : Tint
+}
+
+private fun RemoteViews.tint(viewId: Int, method: String, t: Tint) = when (t) {
+    is Tint.Res -> setColorStateList(viewId, method, t.id)
+    is Tint.Duo -> setColorStateList(viewId, method,
+        ColorStateList.valueOf(t.light), ColorStateList.valueOf(t.dark))
+}
+
+private fun RemoteViews.sizePx(viewId: Int, w: Int, h: Int) {
+    setViewLayoutWidth(viewId, w.toFloat(), TypedValue.COMPLEX_UNIT_PX)
+    setViewLayoutHeight(viewId, h.toFloat(), TypedValue.COMPLEX_UNIT_PX)
+}
+
+/** Whole pixels survive RemoteViews' dimension encoding exactly; fractional dp do not. */
+private fun RemoteViews.marginPx(viewId: Int, type: Int, v: Int) =
+    setViewLayoutMargin(viewId, type, v.toFloat(), TypedValue.COMPLEX_UNIT_PX)
+
+/** Every colour role of one render. */
+private class Palette(
+    val container: Tint, val main: Tint, val variant: Tint, val accent: Tint,
+    val positive: Tint, val negative: Tint, val badge: Tint, val onBadge: Tint,
+    val page: (StatPage.Kind) -> Pair<Tint, Tint>,
 ) {
-    fun tone(t: StripContent.Tone): Int = when (t) {
+    fun tone(t: StripContent.Tone): Tint = when (t) {
         StripContent.Tone.MAIN -> main
         StripContent.Tone.VARIANT -> variant
         StripContent.Tone.ACCENT -> accent
         StripContent.Tone.POSITIVE -> positive
         StripContent.Tone.NEGATIVE -> negative
     }
+}
 
-    companion object {
-        fun of(p: StripPalette): Colors = when (p) {
-            StripPalette.NORMAL -> Colors(
-                R.color.strip_surface, R.color.strip_on_surface, R.color.strip_on_surface_variant,
-                R.color.strip_primary, R.color.strip_positive, R.color.strip_error,
-                R.color.strip_primary, R.color.strip_on_primary)
-            StripPalette.TERTIARY -> Colors(
-                R.color.strip_tertiary_container, R.color.strip_on_tertiary_container,
-                R.color.strip_on_tertiary_container_variant, R.color.strip_tertiary,
-                R.color.strip_positive, R.color.strip_error,
-                R.color.strip_tertiary, R.color.strip_on_tertiary)
-            StripPalette.ERROR -> Colors(
-                R.color.strip_error_container, R.color.strip_on_error_container,
-                R.color.strip_on_error_container_variant, R.color.strip_error,
-                R.color.strip_on_error_container, R.color.strip_error,
-                R.color.strip_error, R.color.strip_on_error)
+private fun res(id: Int) = Tint.Res(id)
+private fun StripColors.Duo.tint() = Tint.Duo(light, dark)
+
+/** Pages in the system palette: each its own tonal container. */
+private val SYSTEM_PAGES = mapOf(
+    StatPage.Kind.ALERT to (res(R.color.strip_error_container) to res(R.color.strip_on_error_container)),
+    StatPage.Kind.LIVE to (res(R.color.strip_secondary_container) to res(R.color.strip_on_secondary_container)),
+    StatPage.Kind.LOOK to (res(R.color.strip_tertiary_container) to res(R.color.strip_on_tertiary_container)),
+    StatPage.Kind.TRIP to (res(R.color.strip_primary_container) to res(R.color.strip_on_primary_container)),
+    StatPage.Kind.AIRFRAME to (res(R.color.strip_surface_variant) to res(R.color.strip_on_surface_variant)),
+)
+
+/** Airline colours worked out once per logo (null: no real colour in it). */
+private val seeds = object : LinkedHashMap<String, StripColors.Lch?>(8, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, StripColors.Lch?>?) = size > 16
+}
+
+/**
+ * The palette for a render. Special aircraft keep their semantic colours
+ * (error red, tertiary); an ordinary flight wears its airline's colours;
+ * without a usable logo it falls back to the system's dynamic colours.
+ */
+private fun palette(art: StripArt, state: WidgetState, logo: String?): Palette {
+    when (StripContents.palette(state)) {
+        StripPalette.ERROR -> return Palette(
+            res(R.color.strip_error_container), res(R.color.strip_on_error_container),
+            res(R.color.strip_on_error_container_variant), res(R.color.strip_error),
+            res(R.color.strip_on_error_container), res(R.color.strip_error),
+            res(R.color.strip_error), res(R.color.strip_on_error)) { SYSTEM_PAGES.getValue(it) }
+        StripPalette.TERTIARY -> return Palette(
+            res(R.color.strip_tertiary_container), res(R.color.strip_on_tertiary_container),
+            res(R.color.strip_on_tertiary_container_variant), res(R.color.strip_tertiary),
+            res(R.color.strip_positive), res(R.color.strip_error),
+            res(R.color.strip_tertiary), res(R.color.strip_on_tertiary)) { SYSTEM_PAGES.getValue(it) }
+        StripPalette.NORMAL -> Unit
+    }
+    val seed = logo?.let { path ->
+        synchronized(seeds) {
+            if (seeds.containsKey(path)) seeds[path]
+            else art.logoPixels(path)?.let(StripColors::seed).also { seeds[path] = it }
         }
+    }
+    if (seed == null) return Palette(
+        res(R.color.strip_surface), res(R.color.strip_on_surface), res(R.color.strip_on_surface_variant),
+        res(R.color.strip_primary), res(R.color.strip_positive), res(R.color.strip_error),
+        res(R.color.strip_primary), res(R.color.strip_on_primary)) { SYSTEM_PAGES.getValue(it) }
+    val sc = StripColors.scheme(seed)
+    return Palette(
+        sc.container.tint(), sc.main.tint(), sc.variant.tint(), sc.accent.tint(),
+        res(R.color.strip_positive), res(R.color.strip_error), sc.badge.tint(), sc.onBadge.tint(),
+    ) { kind ->
+        sc.pages[kind]?.let { (bg, fg) -> bg.tint() to fg.tint() } ?: SYSTEM_PAGES.getValue(kind)
     }
 }

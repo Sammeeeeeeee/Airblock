@@ -20,23 +20,27 @@ Built to be **as light as possible** for 24/7 use:
 A second widget, next to the card above. It shows the nearest aircraft in less space, and only
 its own shapes cover the wallpaper: the rest of the widget is see-through.
 
-- **The whole photo**, never cropped or zoomed, in a rounded rectangle.
+- **The whole photo**, never cropped or zoomed, joined to the card as one band — tight corners
+  where they meet, round ones outside, like Material 3 Expressive's connected button groups.
 - **Callsign with the model's and the airline's logos** beside it ("BAW8KC · A320neo · BA").
   Airbus and Boeing 717/777 logos drop the maker's wordmark so they fit beside the callsign.
 - **The route under it**: `LHR ∿✈── GLA · 34 min left`, the wavy line showing how far along
   the flight is.
-- **A stats pill coming off the photo.** Swipe it up or down, or tap it, for the next page:
-  height (with a climb/descent arrow), speed and distance · where to look ("Look NW 34° up") ·
-  landing time and delay (with flight times on) · registration, type and Mach. An emergency
+- **A stats pill coming off the photo**, docked along the band's bottom and notched into the
+  photo, so it costs no extra height. Swipe it up or down, or tap it, for the next page: height
+  (with a climb/descent arrow), speed and distance · where to look (a compass needle, "NW 34° up")
+  · landing time and delay (with flight times on) · registration, type and Mach. An emergency
   squawk goes first. Launchers that turn widget stacks over by themselves also turn these pages.
-- Two cells tall gives all of that; one cell gives the photo and the card. Military aircraft
-  and emergencies turn it red, other special aircraft tertiary. A new aircraft's lines roll in on
-  the Material 3 Expressive spring.
+- **The airline's colours.** The strip takes its tones from the airline's logo (Material's
+  colour-from-content, set in OkLCH so every livery keeps the same contrast in light and dark).
+  No logo, or one with no real colour: the wallpaper's colours. Military aircraft and emergencies
+  turn it red, other special aircraft tertiary.
+- Two cells tall gives all of that; one cell gives the photo and the card. A new aircraft's lines
+  roll in on the Material 3 Expressive spring.
 
 Text is Google Sans Flex, the Material 3 Expressive typeface (SIL Open Font License, subset
 bundled; licence in `app/src/main/assets/licenses`). Launchers refuse app fonts in widget text,
-so the strip draws its text as images the launcher tints: it still follows light/dark and the
-wallpaper colours.
+so the strip draws its text as images the launcher tints: it still follows light and dark.
 
 **On Niagara:** place it under the clock, 4 wide. Left/right swipes belong to Niagara's widget
 stacks, so the stats page up/down. The strip keeps clear of the A–Z bar on the right, where

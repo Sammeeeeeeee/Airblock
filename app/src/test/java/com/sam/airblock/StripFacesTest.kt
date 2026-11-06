@@ -39,6 +39,7 @@ class StripFacesTest {
             is StatPage.Unit -> it.text
             StatPage.Gap -> "|"
             is StatPage.Arrow -> if (it.climb) "↗" else "↘"
+            is StatPage.Compass -> "(${it.bearingDeg.toInt()}°)"
         }
     }
 
@@ -82,7 +83,7 @@ class StripFacesTest {
         assertEquals(listOf(StatPage.Kind.LIVE, StatPage.Kind.LOOK, StatPage.Kind.AIRFRAME),
             pages.map { it.kind })
         assertEquals("↗ 8,000 ft | 297 mph | 15 km", words(pages[0]))
-        assertEquals("Look NW | 34° up", words(pages[1]))
+        assertEquals("(312°) NW | 34° up", words(pages[1]))
         assertEquals("G-TTNV | A20N | Mach 0.38", words(pages[2]))
     }
 

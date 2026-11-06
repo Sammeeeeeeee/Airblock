@@ -47,6 +47,15 @@ internal enum class StripType(
 /** The stats pill's footprint inside the photo, in photo pixels. */
 internal data class CutOut(val rect: RectF, val radius: Float, val gap: Float)
 
+/**
+ * Corner radii of a connected pair, M3 Expressive style: large on the
+ * group's outside, small where the two pieces meet.
+ */
+internal data class Radii(val outer: Float, val inner: Float) {
+    /** Path radii for the left piece: outer corners left, inner right. */
+    fun array() = floatArrayOf(outer, outer, inner, inner, inner, inner, outer, outer)
+}
+
 /** Draws every bitmap the strip shows. Create per render; cheap. */
 internal class StripArt(context: Context) {
 
@@ -154,11 +163,6 @@ internal class StripArt(context: Context) {
 
     // ---- stats pages ------------------------------------------------------
 
-    /**
-     * One stats page as a single alpha mask: values bold, units light, the
-     * climb/descend arrow inline, all on one baseline. [heightPx] is the
-     * pill's inner height; the text is centred in it.
-     */
     /** Width [statPage] needs for [parts], before any padding to a common width. */
     fun statPageWidth(parts: List<StatPage.Part>, valuePx: Float, unitPx: Float): Int {
         val value = paint(StripType.HERO, valuePx, numeric = true, weight = 720)
@@ -172,6 +176,7 @@ internal class StripArt(context: Context) {
                 is StatPage.Unit -> unit.measureText(part.text)
                 StatPage.Gap -> valuePx * 0.72f
                 is StatPage.Arrow -> CAP_EM * valuePx * 0.78f + valuePx * 0.12f
+                is StatPage.Compass -> compassSize(valuePx)
             }
         }
         return ceil(w + 2 * valuePx * 0.12f).toInt()
@@ -206,37 +211,71 @@ internal class StripArt(context: Context) {
                             arrowS, arrowStroke)
                         x += arrowS + arrowStroke
                     }
+                    is StatPage.Compass -> {
+                        val size = compassSize(valuePx)
+                        compass(c, x + size / 2f, baseline - CAP_EM * valuePx / 2f, size, part.bearingDeg)
+                        x += size
+                    }
                 }
             }
         }
     }
 
     /**
-     * Page dots for each of [count] pages, stacked vertically in [heightPx]:
-     * the current page's dot long and solid, the rest small and faint — the
-     * M3 page indicator turned upright, since the pill pages up and down.
+     * Page dots for each of [count] pages, stacked upright in [heightPx]
+     * since the pill pages up and down: the current page's dot solid, the
+     * rest faint. All one size, so no position reads as a "!".
      */
     fun pageDots(count: Int, heightPx: Float): List<Bitmap> {
         val n = count.coerceAtLeast(1)
-        val dot = (heightPx / (n * 2.2f + 1.2f)).coerceIn(2.5f * density, 4f * density)
-        val gap = dot * 0.9f
-        val long = dot * 2.4f
-        val h = ceil((n - 1) * (dot + gap) + long).toInt()
+        val dot = (heightPx / (n * 1.8f)).coerceIn(2.5f * density, 3.5f * density)
+        val gap = dot * 0.8f
+        val h = ceil(n * dot + (n - 1) * gap).toInt()
         val w = ceil(dot).toInt()
         return (0 until n).map { current ->
             alpha(w, h) { c ->
-                var y = 0f
                 for (i in 0 until n) {
-                    val len = if (i == current) long else dot
                     val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = Color.BLACK
-                        alpha = if (i == current) 255 else 90
+                        alpha = if (i == current) 255 else 80
                     }
-                    c.drawRoundRect(RectF(0f, y, dot, y + len), dot / 2f, dot / 2f, p)
-                    y += len + gap
+                    c.drawCircle(dot / 2f, i * (dot + gap) + dot / 2f, dot / 2f, p)
                 }
             }
         }
+    }
+
+    private fun compassSize(valuePx: Float) = valuePx * 1.05f
+
+    /**
+     * A tiny compass: a thin ring with a north tick, and a needle pointing at
+     * [bearingDeg] (0 = north, clockwise) — an instrument, not a word.
+     */
+    private fun compass(c: Canvas, cx: Float, cy: Float, size: Float, bearingDeg: Double) {
+        val r = size / 2f
+        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = size * 0.09f
+            color = Color.BLACK
+            alpha = 120
+        }
+        c.drawCircle(cx, cy, r - ring.strokeWidth / 2f, ring)
+        c.drawLine(cx, cy - r + ring.strokeWidth * 0.5f, cx, cy - r + size * 0.2f,
+            Paint(ring).apply { alpha = 200; strokeCap = Paint.Cap.ROUND })
+        c.save()
+        c.rotate(bearingDeg.toFloat(), cx, cy)
+        val needle = Path().apply {
+            moveTo(cx, cy - r * 0.78f)
+            lineTo(cx + r * 0.34f, cy + r * 0.38f)
+            lineTo(cx, cy + r * 0.18f)
+            lineTo(cx - r * 0.34f, cy + r * 0.38f)
+            close()
+        }
+        c.drawPath(needle, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            pathEffect = android.graphics.CornerPathEffect(size * 0.05f)
+        })
+        c.restore()
     }
 
     private fun arrow(c: Canvas, climb: Boolean, left: Float, cy: Float, s: Float, stroke: Float) {
@@ -276,7 +315,7 @@ internal class StripArt(context: Context) {
      * [cut] punched out where the stats pill comes off it, so a sliver of
      * wallpaper separates the two. Null if the file is unreadable.
      */
-    fun photo(path: String, widthPx: Int, heightPx: Int, radiusPx: Float, cut: CutOut?): Bitmap? {
+    fun photo(path: String, widthPx: Int, heightPx: Int, radii: Radii, cut: CutOut?): Bitmap? {
         val src = decodeBounded(path) ?: return null
         return argb(widthPx, heightPx, PHOTO_MAX_DENSITY) { c ->
             // CENTER, not crop: the box already has the photo's own aspect, so
@@ -290,16 +329,24 @@ internal class StripArt(context: Context) {
                 shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                     .apply { setLocalMatrix(m) }
             }
-            c.drawRoundRect(shown, radiusPx, radiusPx, p)
+            c.drawPath(Path().apply { addRoundRect(shown, radii.array(), Path.Direction.CW) }, p)
             cut?.let { punch(c, it) }
         }
     }
 
     /** The no-photo tile: a rounded rectangle mask (tinted), cut out like the photo. */
-    fun tile(widthPx: Int, heightPx: Int, radiusPx: Float, cut: CutOut?): Bitmap = alpha(widthPx, heightPx) { c ->
-        c.drawRoundRect(RectF(0f, 0f, widthPx.toFloat(), heightPx.toFloat()), radiusPx, radiusPx,
-            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK })
+    fun tile(widthPx: Int, heightPx: Int, radii: Radii, cut: CutOut?): Bitmap = alpha(widthPx, heightPx) { c ->
+        c.drawPath(Path().apply {
+            addRoundRect(RectF(0f, 0f, widthPx.toFloat(), heightPx.toFloat()), radii.array(), Path.Direction.CW)
+        }, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK })
         cut?.let { punch(c, it) }
+    }
+
+    /** The airline logo's pixels, small, for picking its colour. */
+    fun logoPixels(path: String): IntArray? {
+        val logo = BitmapFactory.decodeFile(path) ?: return null
+        val small = Bitmap.createScaledBitmap(logo, 48, 48, true)
+        return IntArray(48 * 48).also { small.getPixels(it, 0, 48, 0, 0, 48, 48) }
     }
 
     private fun punch(c: Canvas, cut: CutOut) {
