@@ -2,7 +2,6 @@ package com.sam.airblock.engine
 
 import android.content.Context
 import android.util.Log
-import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.AdsbApi
 import com.sam.airblock.data.AeroApi
 import com.sam.airblock.data.AeroPrefs
@@ -23,10 +22,12 @@ import com.sam.airblock.util.AlertGroups
 import com.sam.airblock.util.SpecialType
 import com.sam.airblock.util.Squawk
 import com.sam.airblock.util.TypeNames
+import com.sam.airblock.util.Sky
 import com.sam.airblock.util.Units
-import com.sam.airblock.widget.AirblockWidget
+import com.sam.airblock.widget.Widgets
 import kotlinx.coroutines.launch
 import java.io.IOException
+import kotlin.math.roundToInt
 
 /**
  * One refresh cycle: location → nearest aircraft → (cached) route + photo →
@@ -100,7 +101,7 @@ class Ticker(private val context: Context) {
             it.copy(refreshing = true, stages = stageList(),
                 refreshStage = stageText ?: it.refreshStage)
         }
-        if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
+        if (prev.renderKey() != next.renderKey()) Widgets.updateAll(context)
     }
 
     /** Mark whatever is still running/pending as failed — used on tick failure. */
@@ -171,6 +172,12 @@ class Ticker(private val context: Context) {
             val callsign = ac.callsign
             val planeLat = ac.lat ?: fix.lat
             val planeLon = ac.lon ?: fix.lon
+            // GROUND distance (great-circle over coordinates): a plane 0.5 km
+            // directly overhead is 0 km away, not 0.5 — the API's dst is slant
+            // range and only serves as fallback
+            val groundKm = if (ac.lat != null && ac.lon != null)
+                Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
+            else ac.dst?.let { Units.nmToKm(it) }
 
             // ---- Phase 1: publish the aircraft NOW ------------------------
             // The whole point of a tap is "what's overhead" — that answer is
@@ -213,12 +220,12 @@ class Ticker(private val context: Context) {
                 onGround = ac.onGround,
                 speedMph = ac.gs?.let { Units.ktsToMph(it) },
                 mach = ac.mach,
-                // GROUND distance (great-circle over coordinates): a plane
-                // 0.5 km directly overhead is 0 km away, not 0.5 — the API's
-                // dst is slant range and only serves as fallback
-                distanceKm = if (ac.lat != null && ac.lon != null)
-                    Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
-                else ac.dst?.let { Units.nmToKm(it) },
+                distanceKm = groundKm,
+                bearingDeg = if (ac.lat != null && ac.lon != null)
+                    Units.bearingDeg(fix.lat, fix.lon, ac.lat, ac.lon) else null,
+                elevationDeg = if (ac.onGround) null
+                else Sky.elevationDeg(groundKm, ac.altitudeFt),
+                verticalRateFpm = (ac.baroRate ?: ac.geomRate)?.roundToInt(),
                 routeProgress = geo.progress
                     ?: prev.routeProgress.takeIf { sameFlight && leg == null },
                 etaEpochMs = geo.etaEpochMs
@@ -287,9 +294,7 @@ class Ticker(private val context: Context) {
             runCatching {
                 alertNotifier.evaluate(
                     ac = ac, alert = alert, typeName = resolvedTypeName,
-                    distanceKm = if (ac.lat != null && ac.lon != null)
-                        Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
-                    else ac.dst?.let { Units.nmToKm(it) },
+                    distanceKm = groundKm,
                     fixLat = fix.lat, fixLon = fix.lon,
                     prevClosestHex = prev.hex,
                     photos = photos,
@@ -391,9 +396,6 @@ class Ticker(private val context: Context) {
             Log.d(TAG, "tick @%.2f,%.2f: %s dst=%snm route=%s".format(
                 fix.lat, fix.lon, callsign ?: ac.hex, ac.dst,
                 route?.airportCodes ?: "?"))
-            val groundKm = if (ac.lat != null && ac.lon != null)
-                Units.haversineKm(fix.lat, fix.lon, ac.lat, ac.lon)
-            else ac.dst?.let { Units.nmToKm(it) }
             if (log) EventLog.append(context,
                 "updated — ${callsign ?: ac.hex}" +
                     (groundKm?.let { " · %.1f km".format(it) } ?: ""))
@@ -420,7 +422,7 @@ class Ticker(private val context: Context) {
                     refreshStage = null, stages = stageList(), pausedReason = null,
                     lastError = e.message ?: e.javaClass.simpleName)
             }
-            if (prev.renderKey() != next.renderKey()) AirblockWidget().updateAll(context)
+            if (prev.renderKey() != next.renderKey()) Widgets.updateAll(context)
         }
     }
 
@@ -656,7 +658,7 @@ class Ticker(private val context: Context) {
         val (previous, next) = WidgetStateStore.update(context) { state }
         // Skip the RemoteViews churn when nothing the user can see has changed
         if (previous.renderKey() != next.renderKey()) {
-            AirblockWidget().updateAll(context)
+            Widgets.updateAll(context)
         }
     }
 
@@ -664,7 +666,7 @@ class Ticker(private val context: Context) {
     private suspend fun updateAndRender(transform: (WidgetState) -> WidgetState) {
         val (previous, next) = WidgetStateStore.update(context, transform)
         if (previous.renderKey() != next.renderKey()) {
-            AirblockWidget().updateAll(context)
+            Widgets.updateAll(context)
         }
     }
 

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Length of the card's roll-in: the spring's settling time -->
+    <integer name="strip_roll_ms">420</integer>
+</resources>

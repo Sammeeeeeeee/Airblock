@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Played once when the launcher builds a fresh card (a new aircraft): the
+     two lines roll in, the second just after the first. -->
+<layoutAnimation xmlns:android="http://schemas.android.com/apk/res/android"
+    android:animation="@anim/strip_face_in"
+    android:delay="0.15" />

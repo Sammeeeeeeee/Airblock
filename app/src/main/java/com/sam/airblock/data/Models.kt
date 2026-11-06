@@ -31,6 +31,10 @@ data class Aircraft(
     val gs: Double? = null,
     /** Mach number, e.g. 0.82. */
     val mach: Double? = null,
+    /** Barometric climb (+) / descent (−) rate in ft/min. */
+    @SerialName("baro_rate") val baroRate: Double? = null,
+    /** GNSS climb/descent rate in ft/min — used when the barometric one is missing. */
+    @SerialName("geom_rate") val geomRate: Double? = null,
     /** Emitter category, e.g. "A3" (large), "A7" (rotorcraft), "B6" (drone). */
     val category: String? = null,
     /** adsb.lol DB flags bitmask: 1=military, 2=interesting, 4=PIA, 8=LADD. */

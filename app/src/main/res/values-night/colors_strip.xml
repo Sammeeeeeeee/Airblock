@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="strip_surface">@android:color/system_accent2_800</color>
+    <color name="strip_on_surface">@android:color/system_neutral1_100</color>
+    <color name="strip_on_surface_variant">@android:color/system_neutral2_200</color>
+    <color name="strip_primary">@android:color/system_accent1_200</color>
+    <color name="strip_on_primary">@android:color/system_accent1_800</color>
+    <color name="strip_primary_container">@android:color/system_accent1_700</color>
+    <color name="strip_on_primary_container">@android:color/system_accent1_100</color>
+    <color name="strip_surface_variant">@android:color/system_neutral2_700</color>
+    <color name="strip_outline">@android:color/system_neutral2_400</color>
+    <color name="strip_secondary_container">@android:color/system_accent2_700</color>
+    <color name="strip_on_secondary_container">@android:color/system_accent2_100</color>
+    <color name="strip_tertiary">@android:color/system_accent3_200</color>
+    <color name="strip_on_tertiary">@android:color/system_accent3_800</color>
+    <color name="strip_tertiary_container">@android:color/system_accent3_700</color>
+    <color name="strip_on_tertiary_container">@android:color/system_accent3_100</color>
+    <color name="strip_on_tertiary_container_variant">@android:color/system_accent3_200</color>
+    <color name="strip_error">#FFF2B8B5</color>
+    <color name="strip_on_error">#FF601410</color>
+    <color name="strip_error_container">#FF8C1D18</color>
+    <color name="strip_on_error_container">#FFF9DEDC</color>
+    <color name="strip_on_error_container_variant">#FFF2B8B5</color>
+    <color name="strip_positive">#FF6DD58C</color>
+</resources>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Flight strip. A transparent, full-size root holding one content-sized
+     group: the whole photo, the card beside it and the stats pill that comes
+     off the photo. Everything else stays wallpaper. Sizes and offsets are set
+     per tier from code (FlightStrip.renderTier). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/strip_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <FrameLayout
+        android:id="@+id/strip_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="start|center_vertical">
+
+        <ImageView
+            android:id="@+id/strip_photo"
+            android:layout_width="114dp"
+            android:layout_height="76dp"
+            android:scaleType="fitXY" />
+
+        <!-- Stands in for the photo until there is one: a tinted tile -->
+        <ImageView
+            android:id="@+id/strip_photo_tile"
+            android:layout_width="114dp"
+            android:layout_height="76dp"
+            android:scaleType="fitXY"
+            android:visibility="gone" />
+
+        <!-- Silhouette over the tinted tile when there is no photo -->
+        <ImageView
+            android:id="@+id/strip_photo_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+
+        <!-- Status dot, on the photo's top corner -->
+        <FrameLayout
+            android:id="@+id/strip_status"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/strip_dot"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/strip_status_icon"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:importantForAccessibility="no"
+                android:padding="3dp"
+                android:scaleType="fitCenter" />
+
+            <ProgressBar
+                android:id="@+id/strip_status_spin"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:indeterminate="true"
+                android:padding="2dp"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/strip_card_slot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="120dp" />
+
+        <!-- The stats pill: Android's swipeable stack, clipped to exactly one
+             rounded page. Up/down swipes roll the pages through it (where the
+             launcher passes swipes on); taps do too. -->
+        <FrameLayout
+            android:id="@+id/strip_stats_frame"
+            android:layout_width="200dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="78dp"
+            android:layout_marginTop="63dp"
+            android:clipToOutline="true"
+            android:visibility="gone">
+
+            <StackView
+                android:id="@+id/strip_stats"
+                android:layout_width="230dp"
+                android:layout_height="35dp"
+                android:loopViews="true" />
+        </FrameLayout>
+    </FrameLayout>
+</FrameLayout>

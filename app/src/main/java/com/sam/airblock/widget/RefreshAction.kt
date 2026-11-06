@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.glance.GlanceId
 import androidx.glance.action.ActionParameters
 import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.updateAll
 import com.sam.airblock.data.WidgetStateStore
 import com.sam.airblock.engine.UpdateService
 
@@ -20,11 +19,11 @@ class RefreshAction : ActionCallback {
         parameters: ActionParameters,
     ) {
         WidgetStateStore.update(context) { it.copy(refreshing = true) }
-        AirblockWidget().updateAll(context)
+        Widgets.updateAll(context)
         if (!UpdateService.start(context, tickNow = true)) {
             // FGS start denied — clear the spinner instead of leaving it stuck
             WidgetStateStore.update(context) { it.copy(refreshing = false) }
-            AirblockWidget().updateAll(context)
+            Widgets.updateAll(context)
         }
     }
 }

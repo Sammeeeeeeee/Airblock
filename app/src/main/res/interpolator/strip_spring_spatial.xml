@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material 3 Expressive "default spatial" spring (damping 0.8, stiffness
+     380 — androidx ExpressiveMotionTokens) sampled into a path: view
+     animations can't run springs, so the launcher plays this curve instead.
+     Settles in ~410 ms with a 1.5% overshoot; points sampled from the
+     damped-spring step response. -->
+<pathInterpolator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:pathData="M0,0 L0.0020,0.0001 L0.0062,0.0012 L0.0118,0.0043 L0.0188,0.0105 L0.0268,0.0206 L0.0359,0.0356 L0.0459,0.0558 L0.0569,0.0815 L0.0687,0.1129 L0.0813,0.1497 L0.0947,0.1915 L0.1088,0.2378 L0.1237,0.2878 L0.1393,0.3408 L0.1555,0.3957 L0.1724,0.4518 L0.1900,0.5080 L0.2082,0.5634 L0.2270,0.6173 L0.2464,0.6689 L0.2664,0.7176 L0.2870,0.7629 L0.3082,0.8044 L0.3299,0.8418 L0.3521,0.8751 L0.3749,0.9042 L0.3983,0.9292 L0.4222,0.9503 L0.4465,0.9677 L0.4714,0.9818 L0.4968,0.9928 L0.5227,1.0011 L0.5491,1.0071 L0.5759,1.0112 L0.6033,1.0137 L0.6311,1.0149 L0.6594,1.0151 L0.6881,1.0146 L0.7173,1.0136 L0.7470,1.0123 L0.7771,1.0107 L0.8076,1.0092 L0.8386,1.0076 L0.8700,1.0062 L0.9019,1.0049 L0.9342,1.0038 L0.9669,1.0028 L1.0000,1.0000" />
